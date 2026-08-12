@@ -39,3 +39,27 @@ def test_degenerate_inner_radius_raises_instead_of_hanging():
     # rejection-sampling loop spin forever instead of raising.
     with pytest.raises(ValueError, match="inner_radius"):
         SimulationConfig(grid_size_um=100.0, sampled_radius_cm=0.001, buffer_radius=2, no_z_electrode=2)
+
+
+def test_rf_frequency_is_opt_in_and_defaults_to_none():
+    config = SimulationConfig(seed=0)
+    assert config.rf_frequency_hz is None
+    assert config.rf_cycles_per_time_step is None
+    assert "RF" not in config.summary()
+
+
+def test_rf_cycles_per_time_step_for_a_real_cyclotron_rf():
+    # dt is set by the von Neumann stability criterion, always far coarser
+    # than a real cyclotron's RF period -- individual RF buckets can't be
+    # resolved regardless, so this should be well above 1 with no warning.
+    config = SimulationConfig(rf_frequency_hz=26.26e6, seed=0)
+    assert config.rf_cycles_per_time_step > 1.0
+    assert config.rf_cycles_per_time_step == pytest.approx(config.dt * 26.26e6)
+    assert "RF microstructure" in config.summary()
+
+
+def test_rf_period_longer_than_dt_warns():
+    # a deliberately absurd (very low) "RF frequency" so that one RF period
+    # is longer than dt, to check the warning path actually fires.
+    with pytest.warns(UserWarning, match="RF"):
+        SimulationConfig(rf_frequency_hz=1.0, seed=0)

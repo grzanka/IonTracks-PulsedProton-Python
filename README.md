@@ -216,7 +216,37 @@ print(result.f_t)     # collection efficiency vs. time
 | `sampled_radius_cm` | Radius of the simulated cylindrical sub-volume (bigger = more statistically representative, much slower) |
 | `buffer_radius`, `no_z_electrode` | Margin voxels so charge never drifts off the array edge in one step |
 | `n_clearance_separation_times` | How many ion-transit times to keep simulating after the last pulse, so charge can clear the gap |
+| `rf_frequency_hz` | Optional: the accelerator's RF (e.g. a cyclotron's ~10-100 MHz extraction RF), purely diagnostic -- see below |
 | `seed` | RNG seed for track positions/arrival times |
+
+### Are protons injected all at once, and where does the accelerator's RF fit in?
+
+No -- within a pulse, `pulses.py` spreads track arrival times
+pseudo-uniformly across the *entire* `pulse_duration_s` window (a
+cumulative-sum-of-uniforms trick inherited from the original
+IonTracks-Cython `continuous_beam` model), not clustered at the start.
+
+Real proton beams also have RF microstructure: a cyclotron only
+accelerates/extracts protons in bunches spaced by its extraction RF period
+(e.g. 26.26 MHz -> a bunch every ~38 ns), so a "540 us pulse" is really
+~14,000 RF buckets, not a continuous stream. This code does **not** place
+tracks at explicit RF-bucket times, and that's intentional: the
+simulation's time step `dt` (set by the von Neumann stability criterion
+for the chosen grid, not a free parameter) always comes out far longer
+than one RF period -- typically ~13 RF cycles per `dt` for a 26.26 MHz
+cyclotron on this repository's grids. Individual RF buckets fall inside
+the same `dt` regardless of how arrival times are modeled within it, so
+resolving them explicitly would take a `dt` (and correspondingly a grid)
+tens of times finer, at a computational cost far beyond what even the
+Numba-optimized backend can do in this exercise. Averaging over the RF
+microstructure is the physically- and numerically-correct simplification
+here, not a shortcut.
+
+Pass `rf_frequency_hz` to `SimulationConfig` to make this explicit and
+checked: `config.summary()` reports the resulting RF-cycles-per-time-step,
+and a warning fires if it ever drops below 1 (meaning `dt` would actually
+be fine enough that the averaging assumption deserves a second look) --
+see `tests/test_grid_and_timing.py` for both cases.
 
 ## Repository layout
 

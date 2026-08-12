@@ -11,6 +11,7 @@ only injected during repeating pulse_duration_s windows spaced
 long enough for ions to drift out of the gap.
 """
 
+import warnings
 from dataclasses import dataclass
 from math import pi
 from typing import Optional
@@ -55,6 +56,11 @@ class SimulationConfig:
     dose_rate_Gy_s: float = 60.0  # time-averaged dose rate
     n_pulses: int = 1
     n_clearance_separation_times: float = 2.0
+    # Optional: the accelerator's RF frequency (e.g. a cyclotron's ~10-100 MHz
+    # extraction RF), purely for the diagnostic check in __post_init__/summary()
+    # below -- tracks within a pulse are NOT placed at explicit RF-bucket
+    # times, see the note there for why.
+    rf_frequency_hz: Optional[float] = None
 
     # --- grid (reduced/representative sub-volume, not a full chamber) ---
     # These defaults are deliberately coarse (sampled_radius_cm is about one
@@ -110,6 +116,29 @@ class SimulationConfig:
         self.dt = _von_neumann_dt(
             ION_DIFFUSION_CM2_S, self.unit_length_cm, ION_MOBILITY_CM2_VS, self.Efield_V_cm
         )
+
+        # Real proton beams (cyclotron or synchrocyclotron) arrive as a train
+        # of RF-bucket micro-pulses within pulse_duration_s, not a smooth
+        # rate -- but at every accelerator relevant here, the RF period is
+        # far shorter than dt (itself already at its stability-limited
+        # maximum for the chosen grid), so individual RF buckets can't be
+        # resolved: many of them fall inside the same simulation time step
+        # regardless of how track arrival times are distributed within it.
+        # Averaging over the RF microstructure (pulses.py spreads tracks
+        # pseudo-uniformly across the whole pulse) is therefore the correct
+        # simplification, not an approximation of convenience. This check
+        # makes that assumption explicit instead of silent.
+        self.rf_cycles_per_time_step = self.dt * self.rf_frequency_hz if self.rf_frequency_hz else None
+        if self.rf_cycles_per_time_step is not None and self.rf_cycles_per_time_step < 1.0:
+            warnings.warn(
+                f"dt ({self.dt:.3g} s) is shorter than one RF period "
+                f"(1/{self.rf_frequency_hz:.4g} Hz = {1.0 / self.rf_frequency_hz:.3g} s): "
+                "RF bucket structure may not be safely averaged over at this "
+                "resolution -- consider whether explicit RF-bucket timing is "
+                "needed for this configuration.",
+                stacklevel=2,
+            )
+
         self.separation_time_steps = int(
             self.electrode_gap_cm / (2.0 * ION_MOBILITY_CM2_VS * self.Efield_V_cm * self.dt)
         )
@@ -148,6 +177,14 @@ class SimulationConfig:
         )
 
     def summary(self) -> str:
+        rf_line = ""
+        if self.rf_frequency_hz:
+            rf_period_s = 1.0 / self.rf_frequency_hz
+            rf_line = (
+                f"\nRF microstructure     : {self.rf_frequency_hz / 1e6:.4g} MHz "
+                f"(period {rf_period_s * 1e9:.3g} ns) -> {self.rf_cycles_per_time_step:.3g} "
+                "RF cycles per time step (averaged over, not individually resolved)"
+            )
         return (
             f"Particle              : {self.particle} @ {self.E_MeV_u:.1f} MeV/u "
             f"(LET = {self.LET_keV_um:.3g} keV/um, track radius b = {self.track_radius_cm * 1e4:.3g} um)\n"
@@ -162,7 +199,8 @@ class SimulationConfig:
             f"({self.separation_time_steps * self.dt * 1e6:.3g} us)\n"
             f"Pulse                 : {self.pulse_duration_s * 1e6:.1f} us "
             f"({self.pulse_time_steps} steps), {self.number_of_tracks_per_pulse} tracks, "
-            f"{self.repetition_rate_hz} Hz, {self.n_pulses} pulse(s)\n"
+            f"{self.repetition_rate_hz} Hz, {self.n_pulses} pulse(s)"
+            f"{rf_line}\n"
             f"Total simulated time  : {self.total_time_steps * self.dt * 1e6:.3g} us "
             f"({self.total_time_steps} steps)"
         )

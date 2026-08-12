@@ -6,6 +6,13 @@ cumulative-sum-of-uniforms trick as hadrons/*/continuous_beam.py* (an easy
 way to get an increasing, roughly-Poisson-like sequence of arrival times
 without rejection sampling in time); xy positions are rejection-sampled
 uniformly inside the sampled cylinder, exactly as in the original code.
+
+Note this spreads tracks pseudo-uniformly across the *whole* pulse, not at
+exact accelerator-RF-bucket times (e.g. a cyclotron's ~10-100 MHz
+extraction RF) -- see SimulationConfig.rf_frequency_hz/rf_cycles_per_time_step
+in config.py for why that's the correct simplification here rather than a
+shortcut: the simulation's time step is always far coarser than one RF
+period, so individual buckets can't be resolved regardless.
 """
 
 import numpy as np

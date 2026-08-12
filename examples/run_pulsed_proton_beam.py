@@ -34,6 +34,12 @@ from pulsed_ion_chamber.theory import jaffe_ks
 
 # The physical scenario requested: 150 MeV protons, 200 V across a 0.2 cm
 # gap, delivered in 540 us pulses at 50 Hz, 60 Gy/s time-averaged dose rate.
+# rf_frequency_hz is the cyclotron's extraction RF (26.26 MHz) -- tracks are
+# NOT placed at individual RF-bucket times (see pulses.py/config.py for why:
+# the simulation's dt ends up ~13x coarser than one RF period, so individual
+# buckets can't be resolved regardless of how arrival times are modeled);
+# it's included here only so SimulationConfig.summary() reports and
+# validates that scale separation explicitly.
 BEAM_KWARGS = dict(
     E_MeV_u=150.0,
     voltage_V=200.0,
@@ -42,6 +48,7 @@ BEAM_KWARGS = dict(
     repetition_rate_hz=50.0,
     dose_rate_Gy_s=60.0,
     n_pulses=1,
+    rf_frequency_hz=26.26e6,
 )
 
 # Tuned (empirically, on one machine) so run_simulation_numba() takes about
