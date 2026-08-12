@@ -9,7 +9,7 @@ what solver_numba.py was JIT-compiled from; it's ~10x slower (see
 tests/test_solver_numba.py for a direct comparison on a small config) and
 is not run here.
 
-1. Runs the pulsed-proton scenario on a grid about 2.85 ion-track-radii
+1. Runs the pulsed-proton scenario on a grid about 3.6 ion-track-radii
    wide (still coarser than the ~6-track-radii "converged" grid from the
    original IonTracks study, but noticeably finer than a 1-track-radius
    smoke test) -- tuned to take about 30 seconds single-threaded. Plots
@@ -19,7 +19,7 @@ is not run here.
    Jaffe theory (a fast, independent correctness check).
 3. Uses pulsed_ion_chamber.benchmark to *estimate* -- without running it --
    how long a fully converged grid would take, still single-threaded
-   Numba. That gap (a few hours, vs. the ~30s demo) is your starting
+   Numba. That gap (tens of minutes, vs. the ~30s demo) is your starting
    point for a multi-threaded or GPU port.
 """
 
@@ -45,11 +45,11 @@ BEAM_KWARGS = dict(
 )
 
 # Tuned (empirically, on one machine) so run_simulation_numba() takes about
-# 30 s single-threaded: sampled_radius_cm is roughly 2.85x the (floored)
+# 30 s single-threaded: sampled_radius_cm is roughly 3.6x the (floored)
 # Gaussian track radius of a 150 MeV proton in air (~20 um) -- finer than a
 # 1-track-radius smoke test, still coarser than the ~6-track-radii
 # convergence-study grid from the original IonTracks repository.
-DEMO_GRID_KWARGS = dict(grid_size_um=14.5, sampled_radius_cm=0.0057)
+DEMO_GRID_KWARGS = dict(grid_size_um=8.8, sampled_radius_cm=0.0072)
 
 
 def run_demo():
@@ -76,7 +76,7 @@ def run_demo():
     ax.axvline(config.pulse_duration_s * 1e6, color="gray", ls="--", label="pulse ends")
     ax.set_xlabel("time [us]")
     ax.set_ylabel("collection efficiency f(t)")
-    ax.set_title("Charge collection during and after one proton pulse\n(~2.85 track radii, single-threaded numba, NOT fully converged)")
+    ax.set_title("Charge collection during and after one proton pulse\n(~3.6 track radii, single-threaded numba, NOT fully converged)")
     ax.legend()
     fig.tight_layout()
     fig.savefig("pulsed_proton_beam_f_of_t.png", dpi=150)
@@ -131,12 +131,15 @@ def estimate_converged_grid_cost(demo_config, demo_elapsed_s):
             f"~{est['estimated_hours']:.2g} h single-threaded numba estimate"
         )
     print(
-        "\nA fully converged grid is now hours, not days/weeks, single-threaded "
-        "-- Numba already did the heavy lifting (see tests/test_solver_numba.py "
-        "for a direct comparison against the plain pure-Python reference, "
-        "solver.py). Turning hours into minutes is the next step: numba "
-        "prange, multiprocessing, or a GPU port of the two hot loops "
-        "(_insert_track_numba and _lax_wendroff_step_numba in solver_numba.py)."
+        "\nA fully converged grid is now tens of minutes, not hours/days/weeks, "
+        "single-threaded -- Numba plus the loop restructuring in "
+        "solver_numba.py (see its module docstring: memory-order loop "
+        "reordering, hoisting the z-independent track deposit out of the "
+        "z-loop, the separable-Gaussian factorization, and avoiding sqrt() "
+        "via squared-distance comparisons) already did the heavy lifting. "
+        "Turning minutes into seconds is the next step: numba prange, "
+        "multiprocessing, or a GPU port of _insert_track_numba and "
+        "_lax_wendroff_step_numba."
     )
 
 

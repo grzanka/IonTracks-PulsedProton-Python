@@ -38,10 +38,16 @@ obvious per-voxel/per-track parallelism to exploit. There are two
 implementations of the same algorithm:
 
 - `pulsed_ion_chamber/solver.py` -- the plain pure-Python reference,
-  easiest to read, ~10x slower.
+  mirroring the original IonTracks-Cython loop structure one-to-one, easiest
+  to read, slowest.
 - `pulsed_ion_chamber/solver_numba.py` -- **the baseline backend for this
-  repository**: the same loops, JIT-compiled with `@numba.njit`, still
-  single-threaded (no `parallel=True`, no `prange`). This is what
+  repository**: the same physics, JIT-compiled with `@numba.njit`, still
+  single-threaded (no `parallel=True`, no `prange`), *and* algorithmically
+  restructured (see its module docstring for the details): loop order
+  matched to array memory layout, the per-track density computation hoisted
+  out of the (redundant) z-loop, the 2D Gaussian factored into two 1D
+  Gaussians (`exp(a+b) = exp(a)*exp(b)`, exact, not an approximation), and
+  `sqrt()` replaced by squared-distance comparisons. This is what
   `examples/run_pulsed_proton_beam.py` and the package's top-level
   `run_simulation_numba` actually run.
 
@@ -96,14 +102,14 @@ sampled radius of only about one Gaussian track radius and a coarse grid
 (`grid_size_um=40`) -- good enough to validate the solver's mechanics and
 to reproduce Jaffe theory in the single-track limit, but **not**
 dosimetrically converged; `examples/run_pulsed_proton_beam.py` uses a
-somewhat finer grid (~2.85 track radii, tuned to ~30s single-threaded).
+somewhat finer grid (~3.6 track radii, tuned to ~30s single-threaded).
 `pulsed_ion_chamber.benchmark.estimate_full_runtime()` shows, without
 actually running it, that reaching the fully converged sampled volume used
 in the original repo's convergence study (`documentation/README.md`,
-~6 track radii across) takes on the order of **a few hours**,
-single-threaded Numba -- down from the ~5 days a pure-Python estimate
-gives for the same grid. Closing the remaining gap (hours -> minutes) is
-the point of this repository.
+~6 track radii across) takes on the order of **tens of minutes**,
+single-threaded Numba -- down from an estimated ~5 days for the plain
+pure-Python backend on the same grid. Closing the remaining gap (minutes ->
+seconds) is the point of this repository.
 
 ## Installation
 
@@ -124,37 +130,45 @@ python examples/run_pulsed_proton_beam.py
 
 Takes about 30-45 seconds on a laptop, entirely through
 `pulsed_ion_chamber.solver_numba` (single-threaded: no `parallel=True`, no
-`prange` -- just `@numba.njit` on the same explicit loops as `solver.py`).
-It runs the pulsed-proton scenario on a grid about 2.85 ion-track-radii
-wide (tuned to take ~30 s single-threaded; still coarser than the
-~6-track-radii "converged" grid from the original IonTracks study), prints
-and plots (`pulsed_proton_beam_f_of_t.png`) the collection efficiency
-`f(t)` and recombination correction factor `k_s = 1/f`; validates against
-Jaffe theory in the single-track limit; and prints the *estimated* (not
-actually run) single-threaded-Numba cost of reaching a fully converged
-grid. Expect output along these lines:
+`prange`). It runs the pulsed-proton scenario on a grid about 3.6
+ion-track-radii wide (tuned to take ~30 s single-threaded; still coarser
+than the ~6-track-radii "converged" grid from the original IonTracks
+study), prints and plots (`pulsed_proton_beam_f_of_t.png`) the collection
+efficiency `f(t)` and recombination correction factor `k_s = 1/f`;
+validates against Jaffe theory in the single-track limit; and prints the
+*estimated* (not actually run) single-threaded-Numba cost of reaching a
+fully converged grid. Expect output along these lines:
 
 ```
-Numba compile time (one-off): 0.11 s
-Wall time (numba, single-threaded): 30.1 s
-Final collection efficiency f = 0.5344
-Recombination correction factor k_s = 1/f = 1.8713
+Numba compile time (one-off): 0.10 s
+Wall time (numba, single-threaded): 28.1 s
+Final collection efficiency f = 0.5391
+Recombination correction factor k_s = 1/f = 1.8548
 ...
 k_s (PDE simulation, numba) = 1.001336
 k_s (Jaffe theory)          = 1.001234
 ...
-  This demo's grid, numba estimate  : ~29 s (actually took 30 s -- the estimate is a sanity check on the cost model)
-  ~3 track radii, finer grid                                       : ...  ~0.022 h single-threaded numba estimate
-  ~6 track radii, converged grid (matches original IonTracks study): ...  ~3.4 h single-threaded numba estimate
+  This demo's grid, numba estimate  : ~33 s (actually took 28 s -- the estimate is a sanity check on the cost model)
+  ~3 track radii, finer grid                                       : ...  ~0.003 h single-threaded numba estimate
+  ~6 track radii, converged grid (matches original IonTracks study): ...  ~0.4 h single-threaded numba estimate
 ```
 
-For a controlled, actually-measured (not estimated) comparison of the
+Two actually-measured (not estimated) data points on the speedup, both
+full runs, not extrapolations: `tests/test_solver_numba.py` compares the
 Numba backend against the plain pure-Python reference on a small, fast
-config, see `tests/test_solver_numba.py` (~10x on this development
-machine). Numba's `@njit` alone already buys a solid speedup here just
-from compiling the existing loops, with zero change to the algorithm --
-turning the remaining hours-scale convergence cost into minutes is the
-next step: `prange`, multiprocessing, or a GPU backend.
+config (~10x on this development machine); separately, restructuring the
+loops in `solver_numba.py` (described above) was measured at a further
+~7x on top of that, before vs. after, on the same (previous, smaller)
+demo grid with JIT compilation held constant. `pulsed_ion_chamber.benchmark`'s
+cost model suggests the combined ratio grows substantially larger on
+bigger grids (it estimated ~475x for the current demo grid), but that
+number comes from timing only a handful of pure-Python loop iterations
+and extrapolating -- actually running the pure-Python backend at this
+grid size to verify it directly would itself take too long to be worth
+doing, so treat it as a rough, unverified indication of scale rather than
+a precise figure. Turning the remaining tens-of-minutes convergence cost
+into seconds is the next step: `prange`, multiprocessing, or a GPU
+backend.
 
 ### Running the tests
 
@@ -227,20 +241,25 @@ tests/
 
 ## Parallelization starting points
 
-- `solver_numba.py` already takes the first, smallest step: the same
-  loops, JIT-compiled with `@numba.njit`, no `parallel=True`/`prange`.
-  That alone is worth roughly an order of magnitude (see the example
-  output above) with no algorithm changes -- a good sanity check before
-  reaching for anything more involved.
-- `_insert_track` (in `solver.py`): independent per-voxel work for a fixed
-  track; embarrassingly parallel over `(i, j, k)`, and independent tracks
-  within the same time step could also be parallelized (they only read a
-  shared array and add to it -- watch for the race on `+=`).
-- `_lax_wendroff_step`: independent per-voxel stencil update; the classic
-  structured-grid finite-difference parallelization target (domain
-  decomposition, GPU kernel, or simple NumPy vectorization first).
-- The time loop itself (`run_simulation`) is inherently sequential (each
-  step depends on the previous one), so parallelism has to be found
+`solver_numba.py` already takes the first steps: JIT compilation
+(`@numba.njit`, no `parallel=True`/`prange`) plus the single-threaded
+algorithmic restructuring described above (loop order, hoisting,
+separable Gaussian, squared-distance checks) -- together worth roughly two
+orders of magnitude over the plain pure-Python reference (see the
+"actually-measured" numbers above), with no change in what's computed.
+From here:
+
+- `_insert_track_numba`: independent per-voxel work for a fixed track;
+  embarrassingly parallel over `(i, j, k)` (e.g. `prange` over `i`), and
+  independent tracks within the same time step could also be parallelized
+  (they only read a shared array and add to it -- watch for the race on
+  `+=`).
+- `_lax_wendroff_step_numba`: independent per-voxel stencil update; the
+  classic structured-grid finite-difference parallelization target
+  (`prange` over `i`, domain decomposition, a GPU kernel, or NumPy
+  vectorization).
+- The time loop itself (`run_simulation_numba`) is inherently sequential
+  (each step depends on the previous one), so parallelism has to be found
   *within* each step, not across steps.
 
 ## References

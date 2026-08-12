@@ -102,6 +102,9 @@ class SimulationConfig:
                 "relative to buffer_radius/grid_size_um. Increase sampled_radius_cm, "
                 "decrease grid_size_um, or decrease buffer_radius."
             )
+        # precomputed once so hot loops can compare squared distances and
+        # avoid a sqrt() per voxel/track (see solver_numba.py)
+        self.inner_radius_sq = self.inner_radius**2
 
         # --- time step (von Neumann stability) and drift/pulse timing ---
         self.dt = _von_neumann_dt(

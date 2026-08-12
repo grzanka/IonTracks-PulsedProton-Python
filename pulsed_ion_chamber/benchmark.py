@@ -71,7 +71,7 @@ def estimate_full_runtime(config, n_track_samples=10, n_step_samples=3, rng=None
                 b2,
                 config.Gaussian_factor,
                 config.mid_xy,
-                config.inner_radius,
+                config.inner_radius_sq,
             )
 
         def step_once():
@@ -85,7 +85,7 @@ def estimate_full_runtime(config, n_track_samples=10, n_step_samples=3, rng=None
                 config.no_z_electrode,
                 config.no_z,
                 config.mid_xy,
-                config.inner_radius,
+                config.inner_radius_sq,
                 sx,
                 sc_pos_z,
                 sc_neg_z,

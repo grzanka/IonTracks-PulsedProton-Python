@@ -8,8 +8,6 @@ without rejection sampling in time); xy positions are rejection-sampled
 uniformly inside the sampled cylinder, exactly as in the original code.
 """
 
-from math import sqrt
-
 import numpy as np
 
 
@@ -35,11 +33,14 @@ def _sample_pulse_arrival_histogram(config, rng: np.random.Generator) -> np.ndar
     return counts.astype(np.int64)
 
 
-def sample_xy_inside_cylinder(rng: np.random.Generator, mid_xy: int, inner_radius: float, no_xy: int):
+def sample_xy_inside_cylinder(
+    rng: np.random.Generator, mid_xy: int, inner_radius: float, no_xy: int
+) -> tuple[float, float]:
     """Rejection-sample a grid coordinate (x, y) uniformly inside the sampled
     cylinder (radius inner_radius, centered at (mid_xy, mid_xy))."""
+    inner_radius_sq = inner_radius * inner_radius  # compare squared distances, avoid sqrt() per attempt
     while True:
         x = rng.uniform(0.0, 1.0) * no_xy
         y = rng.uniform(0.0, 1.0) * no_xy
-        if sqrt((x - mid_xy) ** 2 + (y - mid_xy) ** 2) <= inner_radius:
+        if (x - mid_xy) ** 2 + (y - mid_xy) ** 2 <= inner_radius_sq:
             return x, y
