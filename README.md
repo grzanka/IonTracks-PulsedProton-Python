@@ -280,6 +280,7 @@ pulsed_ion_chamber/
   pulses.py           Pulse-train track scheduling (arrival times, xy positions)
   solver.py           The plain pure-Python explicit-loop Lax-Wendroff PDE solver (reference implementation)
   solver_numba.py     The baseline backend: same solver, two hot loops JIT-compiled with numba (single-threaded)
+  solver_numba_parallel.py  Shared-memory multi-core backend: batched track insertion + numba prange (see below)
   benchmark.py        Extrapolates full-scenario runtime from a few measured loop iterations
   data/               Packaged LET/stopping-power tables
 examples/
@@ -288,30 +289,123 @@ tests/
   test_single_track_vs_jaffe.py
   test_grid_and_timing.py
   test_solver_numba.py
+  test_solver_numba_parallel.py
 ```
 
-## Parallelization starting points
+## Running on many cores (Helios / `pulsed_ion_chamber.solver_numba_parallel`)
 
-`solver_numba.py` already takes the first steps: JIT compilation
-(`@numba.njit`, no `parallel=True`/`prange`) plus the single-threaded
-algorithmic restructuring described above (loop order, hoisting,
-separable Gaussian, squared-distance checks) -- together worth roughly two
-orders of magnitude over the plain pure-Python reference (see the
-"actually-measured" numbers above), with no change in what's computed.
-From here:
+This section reports what was actually measured getting the "~6 track
+radii, converged grid" scenario (`grid_size_um=5.0, sampled_radius_cm=0.012`
+with `BEAM_KWARGS` from `examples/run_pulsed_proton_beam.py`: grid
+56x56x406, 719,155 tracks/pulse) to run fast on a Cyfronet Helios node
+(dual AMD EPYC 9654, 192 physical cores, 8 NUMA domains, no SMT). The
+headline result surprised us: **the win is almost entirely algorithmic,
+not thread count.**
 
-- `_insert_track_numba`: independent per-voxel work for a fixed track;
-  embarrassingly parallel over `(i, j, k)` (e.g. `prange` over `i`), and
-  independent tracks within the same time step could also be parallelized
-  (they only read a shared array and add to it -- watch for the race on
-  `+=`).
-- `_lax_wendroff_step_numba`: independent per-voxel stencil update; the
-  classic structured-grid finite-difference parallelization target
-  (`prange` over `i`, domain decomposition, a GPU kernel, or NumPy
-  vectorization).
-- The time loop itself (`run_simulation_numba`) is inherently sequential
-  (each step depends on the previous one), so parallelism has to be found
-  *within* each step, not across steps.
+### The algorithmic fix (the actual ~60x)
+
+`solver_numba.py`'s `_insert_track_numba` deposits one track by looping
+over the whole grid and, for every `(i, j)`, writing the same density into
+every one of `no_z` z-layers (a track runs the length of the gap, so its
+2D Gaussian cross-section is z-independent -- see that function's
+docstring). That `O(no_z)` broadcast is repeated **once per track**, but a
+single time step in the converged scenario has ~350 tracks arriving at
+once, all broadcasting into the *same* z-layers. `solver_numba_parallel.py`
+sums a whole step's per-`(i, j)` Gaussian contributions first (still with
+the separable-Gaussian trick, so no extra `exp()` calls) and only then does
+the `O(no_z)` broadcast once, for the combined density. That turns
+`O(n_tracks_per_step * no_xy^2 * no_z)` into
+`O(n_tracks_per_step * no_xy^2 + no_xy^2 * no_z)` -- on this grid, roughly
+two orders of magnitude fewer floating-point ops, and it also cuts the
+number of Numba parallel-region launches for track insertion from
+~719,000 (one per track) down to ~2,000 (one per time step that has any
+tracks).
+
+Measured effect, single core, same physics, same RNG stream: the
+converged scenario went from **~0.41 h (extrapolated, matches the
+existing `benchmark.py` cost-model estimate in this README's Usage
+section) to an actually-measured 22.9 s** -- about **65x**, before using a
+second core.
+
+### Why more threads did *not* help further (measured, not assumed)
+
+The natural next step -- `numba.njit(parallel=True)` + `prange` over the
+grid, for both `_insert_tracks_step_numba_parallel` and
+`_lax_wendroff_step_numba_parallel` -- was implemented (see
+`solver_numba_parallel.py`'s module docstring for why it's safe: disjoint
+per-voxel writes, no locking needed) and actually benchmarked end-to-end on
+this Helios allocation, sweeping thread counts from 1 to 190 with Numba's
+default `omp` threading layer. Rather than scaling up, wall time got
+*worse* with more threads:
+
+| threads | wall time (converged run) |
+|---|---|
+| 1   | 22.9 s |
+| 8   | 43.4 s |
+| 32  | 39.4 s |
+| 64  | 37.3 s |
+| 96  | 37.9 s |
+| 190 | 44.4 s |
+
+After the batching fix, each individual parallel-region launch does very
+little work (a single time step, ~0.2-0.5 ms of compute at high thread
+counts) but there are still ~4,500 of them (2,040 insert + 2,496
+lax-wendroff calls) over the run. Numba's `omp` backend pays a real
+fork-join/barrier synchronization cost -- worse across this machine's 8
+NUMA domains -- on *every* one of those launches, and once the per-launch
+compute is this small, that fixed cost dominates regardless of how many
+threads are asked for. Swapping to Numba's built-in `workqueue` threading
+layer (`NUMBA_THREADING_LAYER=workqueue`, no external dependency) has
+lower fixed overhead and did modestly better (e.g. ~15-25 s at 8-32
+threads in repeated trials), but the run-to-run variance at that point is
+comparable to the effect size itself -- there is no thread count that
+reliably, substantially beats 1 on this workload/hardware/threading-layer
+combination. **Conclusion: for a single run of this scenario, just use 1
+thread** (`run_simulation_numba_parallel(config, num_threads=1)` --
+equivalent to `solver_numba.run_simulation_numba`, plus the batching fix).
+
+### The actual best way to use ~190 cores: independent replicas, not threads
+
+Since one converged run is now ~23 s regardless of thread count, the
+90/10 use of 190 cores isn't threading one run -- it's running **many
+independent single-threaded replicas concurrently** (different RNG seeds,
+or a parameter sweep over energy/dose-rate/voltage), via
+`multiprocessing.Pool` or a Slurm job array. Measured directly: 64
+concurrent single-threaded replicas (`multiprocessing.Pool(64)`, each
+pinned to its own core) completed in **69 s total** wall time -- vs. an
+estimated ~1,600 s (64 x 23 s "estimated", ~27 min) run sequentially, a
+~23x aggregate speedup for 64x the statistics (the shortfall from a
+theoretical 64x, ~2x slower per run under contention, comes from 64
+processes sharing memory bandwidth/L3 and JIT-compiling concurrently -- a
+Slurm job array with `--exclusive` single-core jobs would avoid most of
+that). Scaled to the full 190-core allocation, this is the way to spend
+the resource: dozens of converged, statistically-independent results in
+about the time one one used to take.
+
+### Running any of this on Helios: the cpuset gotcha
+
+An interactive Slurm allocation requested as `--ntasks=190
+--cpus-per-task=1` (common for "give me N cores" on Helios/PLGrid) hands
+back a shell whose *own* process is cpuset-restricted to a single core --
+confirmed directly (`nproc` returned `1`, `taskset -pc $$` showed only CPU
+0) even though `SLURM_CPUS_ON_NODE=190` and the whole node is otherwise
+reserved for the job. `numba.set_num_threads(N)`/`NUMBA_NUM_THREADS` do
+nothing useful if the OS only lets the process see one core in the first
+place. The fix is to launch the multi-threaded (or multi-process) Python
+run as its own Slurm step with `--cpu-bind=none` (or `unset
+SLURM_CPU_BIND`), so its cgroup gets the full core mask instead of
+inheriting the shell's single-CPU one:
+
+```bash
+srun --overlap --ntasks=1 --cpus-per-task=190 --cpu-bind=none \
+  python examples/run_pulsed_proton_beam.py   # or any multi-core/multiprocess script
+```
+
+(`--overlap` lets this new step share the allocation's cores with the
+still-running interactive shell rather than requiring its own separate
+allocation.) Verify with `python -c "import os;
+print(len(os.sched_getaffinity(0)))"` before trusting any thread-count
+benchmark on this platform.
 
 ## References
 

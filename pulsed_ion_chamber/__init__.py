@@ -8,10 +8,14 @@ single-threaded Numba (`run_simulation_numba`, in solver_numba.py): the
 same explicit loops, JIT-compiled, no `parallel=True`/`prange`. The plain
 pure-Python reference it was compiled from (`run_simulation`, in
 solver.py) is kept for comparison/readability but is ~10x slower.
+`run_simulation_numba_parallel` (solver_numba_parallel.py) is the
+shared-memory multi-core backend: same algorithm, both hot loops
+parallelized across CPU cores with Numba prange.
 """
 
 from pulsed_ion_chamber.config import SimulationConfig
 from pulsed_ion_chamber.solver import Result, run_simulation
 from pulsed_ion_chamber.solver_numba import run_simulation_numba
+from pulsed_ion_chamber.solver_numba_parallel import run_simulation_numba_parallel
 
-__all__ = ["SimulationConfig", "Result", "run_simulation", "run_simulation_numba"]
+__all__ = ["SimulationConfig", "Result", "run_simulation", "run_simulation_numba", "run_simulation_numba_parallel"]
