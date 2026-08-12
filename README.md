@@ -103,9 +103,11 @@ source venv/bin/activate
 pip install -e .          # or: pip install -r requirements.txt
 ```
 
-Numba is optional (only used for the single-threaded JIT comparison in the
-example, `pulsed_ion_chamber/solver_numba.py`); the core package and tests
-work without it:
+The core package (`SimulationConfig`, `run_simulation`, `theory`, ...) only
+needs the dependencies above. `examples/run_pulsed_proton_beam.py` also
+needs Numba, since it runs everything through the single-threaded
+JIT-compiled backend (the plain pure-Python `solver.run_simulation` is
+~10x slower and is not run by the example -- see below):
 
 ```bash
 pip install -e ".[numba]"
@@ -117,36 +119,41 @@ pip install -e ".[numba]"
 python examples/run_pulsed_proton_beam.py
 ```
 
-Takes roughly 1-2 minutes on a laptop. It runs a coarse-grid version of the
-default pulsed-proton scenario, prints and plots (`pulsed_proton_beam_f_of_t.png`)
-the collection efficiency `f(t)` and recombination correction factor
-`k_s = 1/f`; re-runs the same scenario with the hot loops JIT-compiled by
-Numba (single-threaded) and reports the speedup, if numba is installed;
+Takes about 30-45 seconds on a laptop, entirely through
+`pulsed_ion_chamber.solver_numba` (single-threaded: no `parallel=True`, no
+`prange` -- just `@numba.njit` on the same explicit loops as
+`solver.py`). It runs the pulsed-proton scenario on a grid about 2.85
+ion-track-radii wide (tuned to take ~30 s single-threaded; still coarser
+than the ~6-track-radii "converged" grid from the original IonTracks
+study), prints and plots (`pulsed_proton_beam_f_of_t.png`) the collection
+efficiency `f(t)` and recombination correction factor `k_s = 1/f`;
 validates against Jaffe theory in the single-track limit; and prints the
-estimated (not actually run) cost of a converged version of the same
-scenario. Expect output along these lines:
+*estimated* (not actually run) cost of the plain pure-Python backend for
+this same grid, and of a fully converged grid. Expect output along these
+lines:
 
 ```
-Wall time (pure Python): 41.3 s
-Final collection efficiency f = 0.6566
-Recombination correction factor k_s = 1/f = 1.5229
+Numba compile time (one-off): 0.12 s
+Wall time (numba, single-threaded): 29.2 s
+Final collection efficiency f = 0.5344
+Recombination correction factor k_s = 1/f = 1.8713
 ...
-Wall time (numba, single-threaded, warm): 4.2 s
-Speedup vs. pure Python: 9.9x
-Max |f_t difference| vs. pure Python: 0 (k_s: 1.522911 vs 1.522911)
+k_s (PDE simulation, numba) = 1.001336
+k_s (Jaffe theory)          = 1.001234
 ...
-k_s (PDE simulation) = 1.001336
-k_s (Jaffe theory)   = 1.001234
-...
-  coarse (demo above)                              : ...  ~0.012 h serial-Python estimate
-  ~6 track radii, converged grid (matches original) : ...  ~1.3e+02 h serial-Python estimate
+  This demo's grid, pure Python (estimated, not run) : ~2259 s (numba single-threaded actually took 29 s -> ~77x)
+  ~6 track radii, converged grid (matches original)  : ...  ~1.2e+02 h serial-Python estimate
 ```
 
-Numba's `@njit` alone (no `parallel=True`, no `prange` -- deliberately
-single-threaded) already buys roughly an order of magnitude here just from
-compiling the existing loops, with zero change to the algorithm; it's the
-smallest possible first step before reaching for `prange`,
-multiprocessing, or a GPU backend.
+The pure-Python-vs-numba ratio printed there is an *estimate* (a cost
+model that times a few pure-Python loop iterations and extrapolates, not
+an actual full pure-Python run) and will vary between machines and runs;
+for a controlled, actually-measured comparison of the two backends on a
+small, fast config, see `tests/test_solver_numba.py`, which found ~10x on
+this development machine. Numba's `@njit` alone already buys a solid
+speedup here just from compiling the existing loops, with zero change to
+the algorithm; it's the smallest possible first step before reaching for
+`prange`, multiprocessing, or a GPU backend.
 
 ### Running the tests
 
