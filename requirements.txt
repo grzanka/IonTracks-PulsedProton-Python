@@ -4,3 +4,4 @@ pandas
 mpmath
 matplotlib
 pytest
+numba

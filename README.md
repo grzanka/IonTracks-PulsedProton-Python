@@ -103,6 +103,14 @@ source venv/bin/activate
 pip install -e .          # or: pip install -r requirements.txt
 ```
 
+Numba is optional (only used for the single-threaded JIT comparison in the
+example, `pulsed_ion_chamber/solver_numba.py`); the core package and tests
+work without it:
+
+```bash
+pip install -e ".[numba]"
+```
+
 ## Usage
 
 ```bash
@@ -112,20 +120,33 @@ python examples/run_pulsed_proton_beam.py
 Takes roughly 1-2 minutes on a laptop. It runs a coarse-grid version of the
 default pulsed-proton scenario, prints and plots (`pulsed_proton_beam_f_of_t.png`)
 the collection efficiency `f(t)` and recombination correction factor
-`k_s = 1/f`, validates against Jaffe theory in the single-track limit, and
-prints the estimated (not actually run) cost of a converged version of the
-same scenario. Expect output along these lines:
+`k_s = 1/f`; re-runs the same scenario with the hot loops JIT-compiled by
+Numba (single-threaded) and reports the speedup, if numba is installed;
+validates against Jaffe theory in the single-track limit; and prints the
+estimated (not actually run) cost of a converged version of the same
+scenario. Expect output along these lines:
 
 ```
+Wall time (pure Python): 41.3 s
 Final collection efficiency f = 0.6566
 Recombination correction factor k_s = 1/f = 1.5229
+...
+Wall time (numba, single-threaded, warm): 4.2 s
+Speedup vs. pure Python: 9.9x
+Max |f_t difference| vs. pure Python: 0 (k_s: 1.522911 vs 1.522911)
 ...
 k_s (PDE simulation) = 1.001336
 k_s (Jaffe theory)   = 1.001234
 ...
-  coarse (demo above)                              : ...  ~0.014 h serial-Python estimate
-  ~6 track radii, converged grid (matches original) : ...  ~1.6e+02 h serial-Python estimate
+  coarse (demo above)                              : ...  ~0.012 h serial-Python estimate
+  ~6 track radii, converged grid (matches original) : ...  ~1.3e+02 h serial-Python estimate
 ```
+
+Numba's `@njit` alone (no `parallel=True`, no `prange` -- deliberately
+single-threaded) already buys roughly an order of magnitude here just from
+compiling the existing loops, with zero change to the algorithm; it's the
+smallest possible first step before reaching for `prange`,
+multiprocessing, or a GPU backend.
 
 ### Running the tests
 
@@ -134,9 +155,10 @@ pip install -e ".[dev]"   # or: pip install pytest
 pytest
 ```
 
-All 8 tests finish in well under 10 seconds (they use even smaller grids
-than the example) and include a check against analytic Jaffe theory in the
-single-track limit.
+All 11 tests finish in a few seconds (they use much smaller grids than the
+default example) and include a check against analytic Jaffe theory in the
+single-track limit, plus a numba-vs-pure-Python correctness check (skipped
+automatically if numba isn't installed).
 
 Programmatic use:
 
@@ -185,6 +207,7 @@ pulsed_ion_chamber/
   config.py           SimulationConfig: physical inputs + derived grid/timing quantities
   pulses.py           Pulse-train track scheduling (arrival times, xy positions)
   solver.py           The explicit-loop Lax-Wendroff PDE solver -- the code to parallelize
+  solver_numba.py     Optional: the same solver with the two hot loops JIT-compiled (single-threaded)
   benchmark.py        Extrapolates full-scenario runtime from a few measured loop iterations
   data/               Packaged LET/stopping-power tables
 examples/
@@ -192,10 +215,16 @@ examples/
 tests/
   test_single_track_vs_jaffe.py
   test_grid_and_timing.py
+  test_solver_numba.py
 ```
 
 ## Parallelization starting points
 
+- `solver_numba.py` already takes the first, smallest step: the same
+  loops, JIT-compiled with `@numba.njit`, no `parallel=True`/`prange`.
+  That alone is worth roughly an order of magnitude (see the example
+  output above) with no algorithm changes -- a good sanity check before
+  reaching for anything more involved.
 - `_insert_track` (in `solver.py`): independent per-voxel work for a fixed
   track; embarrassingly parallel over `(i, j, k)`, and independent tracks
   within the same time step could also be parallelized (they only read a

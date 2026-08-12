@@ -2,20 +2,26 @@
 """Example: recombination in a parallel-plate ionization chamber exposed to
 a pulsed proton beam (540 us pulses, 50 Hz, 60 Gy/s average dose rate).
 
-This script does three things:
+This script does four things:
 
 1. Runs a quick, coarse-grid version of the requested scenario end to end
    (~1 minute) and plots the collection efficiency f(t) and the final
    recombination correction factor k_s = 1/f.
-2. Validates the solver in the single-track limit against the analytic
+2. Re-runs the *same* scenario with the two hot loops JIT-compiled by
+   Numba (still single-threaded: no parallel=True, no prange) and reports
+   the speedup and a correctness check against the pure-Python result --
+   the smallest possible first step of the parallelization exercise.
+3. Validates the solver in the single-track limit against the analytic
    Jaffe theory (a fast, independent correctness check).
-3. Uses pulsed_ion_chamber.benchmark to *estimate* -- without running it --
+4. Uses pulsed_ion_chamber.benchmark to *estimate* -- without running it --
    how long a dosimetrically-converged version of the same scenario (a
    sampled volume several ion-track-radii wide, at fine grid resolution)
    would take in this serial, explicit-loop Python implementation. That
    gap is the reason this repository exists: it is your starting point for
    a multi-threaded or GPU port.
 """
+
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -45,8 +51,11 @@ def run_quick_demo():
     config = SimulationConfig(**BEAM_KWARGS, grid_size_um=40.0, sampled_radius_cm=0.002, seed=1)
     print(config.summary())
     print()
+    t0 = time.perf_counter()
     result = run_simulation(config, progress=True)
-    print(f"\nFinal collection efficiency f = {result.f_t[-1]:.4f}")
+    elapsed_s = time.perf_counter() - t0
+    print(f"\nWall time (pure Python): {elapsed_s:.1f} s")
+    print(f"Final collection efficiency f = {result.f_t[-1]:.4f}")
     print(f"Recombination correction factor k_s = 1/f = {result.ks:.4f}")
 
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -59,13 +68,38 @@ def run_quick_demo():
     fig.tight_layout()
     fig.savefig("pulsed_proton_beam_f_of_t.png", dpi=150)
     print("Saved plot to pulsed_proton_beam_f_of_t.png")
-    return config, result
+    return config, result, elapsed_s
+
+
+def run_numba_speedup_check(config, result_py, elapsed_py_s):
+    print()
+    print("=" * 70)
+    print("2) Same scenario, single-threaded Numba JIT vs. pure Python")
+    print("=" * 70)
+    try:
+        from pulsed_ion_chamber.solver_numba import run_simulation_numba, warmup
+    except ImportError:
+        print("numba is not installed (pip install numba) -- skipping this section.")
+        return
+
+    t0 = time.perf_counter()
+    warmup()  # trigger JIT compilation on tiny dummy arrays, excluded from the timing below
+    print(f"Numba compile time (one-off): {time.perf_counter() - t0:.2f} s")
+
+    t0 = time.perf_counter()
+    result_nb = run_simulation_numba(config, progress=False)
+    elapsed_nb_s = time.perf_counter() - t0
+    print(f"Wall time (numba, single-threaded, warm): {elapsed_nb_s:.2f} s")
+    print(f"Speedup vs. pure Python: {elapsed_py_s / elapsed_nb_s:.1f}x")
+
+    max_diff = float(np.max(np.abs(result_py.f_t - result_nb.f_t)))
+    print(f"Max |f_t difference| vs. pure Python: {max_diff:.3g} (k_s: {result_py.ks:.6f} vs {result_nb.ks:.6f})")
 
 
 def validate_against_jaffe_theory():
     print()
     print("=" * 70)
-    print("2) Single-track limit vs. analytic Jaffe theory")
+    print("3) Single-track limit vs. analytic Jaffe theory")
     print("=" * 70)
     config = SimulationConfig(
         E_MeV_u=1.0,
@@ -88,7 +122,7 @@ def validate_against_jaffe_theory():
 def estimate_converged_runtime():
     print()
     print("=" * 70)
-    print("3) Cost of a dosimetrically-converged version of the same scenario")
+    print("4) Cost of a dosimetrically-converged version of the same scenario")
     print("=" * 70)
     for label, sampled_radius_cm, grid_size_um in [
         ("coarse (demo above)", 0.002, 40.0),
@@ -106,14 +140,16 @@ def estimate_converged_runtime():
             f"~{est['estimated_hours']:.2g} h serial-Python estimate"
         )
     print(
-        "\nThis is why the explicit loops in solver.py "
-        "(_insert_track and _lax_wendroff_step) are the target for your "
-        "multi-threading/GPU port -- vectorizing or parallelizing them is "
-        "what makes the converged scenario tractable."
+        "\nSingle-threaded Numba (section 2) already buys a solid speedup for "
+        "free, but even that likely isn't enough to close this gap -- "
+        "the explicit loops in solver.py (_insert_track and "
+        "_lax_wendroff_step) are the target for your next step: numba "
+        "prange, multiprocessing, or a GPU port."
     )
 
 
 if __name__ == "__main__":
-    run_quick_demo()
+    config, result, elapsed_s = run_quick_demo()
+    run_numba_speedup_check(config, result, elapsed_s)
     validate_against_jaffe_theory()
     estimate_converged_runtime()

@@ -19,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+numba = ["numba"]
 
 [tool.setuptools.packages.find]
 include = ["pulsed_ion_chamber*"]

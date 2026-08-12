@@ -31,3 +31,11 @@ def test_more_pulses_take_more_total_time_steps():
     one_pulse = SimulationConfig(n_pulses=1)
     two_pulses = SimulationConfig(n_pulses=2)
     assert two_pulses.total_time_steps > one_pulse.total_time_steps
+
+
+def test_degenerate_inner_radius_raises_instead_of_hanging():
+    # sampled_radius_cm too small relative to buffer_radius/grid_size_um
+    # makes inner_radius <= 0, which would make pulses.sample_xy_inside_cylinder's
+    # rejection-sampling loop spin forever instead of raising.
+    with pytest.raises(ValueError, match="inner_radius"):
+        SimulationConfig(grid_size_um=100.0, sampled_radius_cm=0.001, buffer_radius=2, no_z_electrode=2)

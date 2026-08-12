@@ -91,6 +91,17 @@ class SimulationConfig:
         self.mid_xy = self.no_xy // 2
         self.outer_radius = self.no_xy / 2.0
         self.inner_radius = self.outer_radius - self.buffer_radius
+        if self.inner_radius <= 0:
+            # pulses.sample_xy_inside_cylinder rejection-samples uniformly in
+            # [0, no_xy]^2 until it lands inside inner_radius; if that disk
+            # has zero or negative radius the loop never (or almost never)
+            # accepts and hangs. Catch it here instead of at runtime.
+            raise ValueError(
+                f"inner_radius = {self.inner_radius:.3g} <= 0 (no_xy={self.no_xy}, "
+                f"buffer_radius={self.buffer_radius}): sampled_radius_cm is too small "
+                "relative to buffer_radius/grid_size_um. Increase sampled_radius_cm, "
+                "decrease grid_size_um, or decrease buffer_radius."
+            )
 
         # --- time step (von Neumann stability) and drift/pulse timing ---
         self.dt = _von_neumann_dt(
