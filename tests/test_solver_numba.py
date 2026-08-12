@@ -1,6 +1,7 @@
-"""The single-threaded Numba path must reproduce the pure-Python solver
-exactly (same RNG draws, same arithmetic, just JIT-compiled). Skipped if
-numba isn't installed -- it's an optional extra, not a core dependency.
+"""The single-threaded Numba path (the baseline backend for this
+repository, solver_numba.py) must reproduce the plain pure-Python
+reference implementation (solver.py) exactly -- same RNG draws, same
+arithmetic, just JIT-compiled.
 """
 
 import numpy as np
@@ -8,8 +9,7 @@ import pytest
 
 from pulsed_ion_chamber.config import SimulationConfig
 from pulsed_ion_chamber.solver import run_simulation
-
-numba = pytest.importorskip("numba")
+from pulsed_ion_chamber.solver_numba import run_simulation_numba, warmup
 
 
 def _fast_config(seed):
@@ -32,8 +32,6 @@ def _fast_config(seed):
 
 
 def test_numba_matches_pure_python():
-    from pulsed_ion_chamber.solver_numba import run_simulation_numba
-
     result_py = run_simulation(_fast_config(3), progress=False)
     result_nb = run_simulation_numba(_fast_config(3), progress=False)
 
@@ -42,6 +40,4 @@ def test_numba_matches_pure_python():
 
 
 def test_warmup_does_not_hang_or_raise():
-    from pulsed_ion_chamber.solver_numba import warmup
-
     warmup()  # should compile and return in well under a second

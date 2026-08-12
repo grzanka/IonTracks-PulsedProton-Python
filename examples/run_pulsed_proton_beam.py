@@ -2,11 +2,12 @@
 """Example: recombination in a parallel-plate ionization chamber exposed to
 a pulsed proton beam (540 us pulses, 50 Hz, 60 Gy/s average dose rate).
 
-This script runs everything through the single-threaded Numba backend
-(pulsed_ion_chamber.solver_numba) -- the plain pure-Python backend
-(pulsed_ion_chamber.solver) is ~10x slower (see README/test_solver_numba.py
-for a direct comparison on a small config) and is deliberately not run
-here so the whole script finishes in well under a minute.
+Single-threaded Numba (pulsed_ion_chamber.solver_numba) is the baseline
+backend for this repository -- everything below runs through it. The
+plain pure-Python reference implementation (pulsed_ion_chamber.solver) is
+what solver_numba.py was JIT-compiled from; it's ~10x slower (see
+tests/test_solver_numba.py for a direct comparison on a small config) and
+is not run here.
 
 1. Runs the pulsed-proton scenario on a grid about 2.85 ion-track-radii
    wide (still coarser than the ~6-track-radii "converged" grid from the
@@ -17,10 +18,9 @@ here so the whole script finishes in well under a minute.
 2. Validates the solver in the single-track limit against the analytic
    Jaffe theory (a fast, independent correctness check).
 3. Uses pulsed_ion_chamber.benchmark to *estimate* -- without running it --
-   how much longer the plain pure-Python backend would take for the same
-   grid, and how much longer still a fully converged grid would take. That
-   gap is the reason this repository exists: it is your starting point for
-   a multi-threaded or GPU port.
+   how long a fully converged grid would take, still single-threaded
+   Numba. That gap (a few hours, vs. the ~30s demo) is your starting
+   point for a multi-threaded or GPU port.
 """
 
 import time
@@ -107,18 +107,15 @@ def validate_against_jaffe_theory():
     print(f"k_s (Jaffe theory)          = {ks_jaffe:.6f}")
 
 
-def estimate_pure_python_and_converged_cost(demo_elapsed_s):
+def estimate_converged_grid_cost(demo_config, demo_elapsed_s):
     print()
     print("=" * 70)
-    print("3) Cost of the pure-Python backend, and of a fully converged grid")
+    print("3) Cost of a fully converged grid, still single-threaded Numba")
     print("=" * 70)
-    demo_config = SimulationConfig(**BEAM_KWARGS, **DEMO_GRID_KWARGS, seed=1)
-    demo_est = estimate_full_runtime(demo_config)
+    demo_est = estimate_full_runtime(demo_config, backend="numba")
     print(
-        f"  This demo's grid, pure Python (estimated, not run) : "
-        f"~{demo_est['estimated_hours'] * 3600:.0f} s "
-        f"(numba single-threaded actually took {demo_elapsed_s:.0f} s -> "
-        f"~{demo_est['estimated_hours'] * 3600 / demo_elapsed_s:.0f}x)"
+        f"  This demo's grid, numba estimate  : ~{demo_est['estimated_seconds']:.0f} s "
+        f"(actually took {demo_elapsed_s:.0f} s -- the estimate is a sanity check on the cost model)"
     )
     for label, sampled_radius_cm, grid_size_um in [
         ("~3 track radii, finer grid", 0.006, 10.0),
@@ -127,24 +124,23 @@ def estimate_pure_python_and_converged_cost(demo_elapsed_s):
         config = SimulationConfig(
             **BEAM_KWARGS, grid_size_um=grid_size_um, sampled_radius_cm=sampled_radius_cm, seed=1
         )
-        est = estimate_full_runtime(config)
+        est = estimate_full_runtime(config, backend="numba")
         print(
             f"  {label:65s}: grid {config.no_xy}x{config.no_xy}x{config.no_z_with_buffer}, "
             f"{est['total_tracks']:>10,d} tracks/pulse -> "
-            f"~{est['estimated_hours']:.2g} h serial-Python estimate"
+            f"~{est['estimated_hours']:.2g} h single-threaded numba estimate"
         )
     print(
-        "\nSingle-threaded Numba already buys roughly an order of magnitude "
-        "for free (see tests/test_solver_numba.py for a direct, small-scale "
-        "comparison against the pure-Python backend), but even that isn't "
-        "enough to reach a fully converged grid in reasonable time -- the "
-        "explicit loops in solver.py/solver_numba.py (_insert_track and "
-        "_lax_wendroff_step) are the target for your next step: numba "
-        "prange, multiprocessing, or a GPU port."
+        "\nA fully converged grid is now hours, not days/weeks, single-threaded "
+        "-- Numba already did the heavy lifting (see tests/test_solver_numba.py "
+        "for a direct comparison against the plain pure-Python reference, "
+        "solver.py). Turning hours into minutes is the next step: numba "
+        "prange, multiprocessing, or a GPU port of the two hot loops "
+        "(_insert_track_numba and _lax_wendroff_step_numba in solver_numba.py)."
     )
 
 
 if __name__ == "__main__":
     config, result, elapsed_s = run_demo()
     validate_against_jaffe_theory()
-    estimate_pure_python_and_converged_cost(elapsed_s)
+    estimate_converged_grid_cost(config, elapsed_s)

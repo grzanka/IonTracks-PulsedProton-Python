@@ -32,15 +32,25 @@ beams*, so this repository combines:
 - the pulse on/off timing idea from `electrons/common/pulsed_e_beam.py`
   (generalized here from a single pulse to a repeating pulse train).
 
-It is deliberately written with **plain, explicit nested Python loops**
-(see `pulsed_ion_chamber/solver.py`) rather than vectorized NumPy or a
-compiled backend -- unlike the original repository, this is *not* meant to
-be fast. It is meant to be an obviously-correct, easy-to-read starting
-point for a multi-threading or GPU parallelization exercise. The two hot
-loops, `_insert_track` (per-track Gaussian deposition) and
-`_lax_wendroff_step` (per-voxel PDE update), are exactly where the original
-project used Cython/Numba/CuPy for a 6-17x (or, on GPU, much larger)
-speedup.
+It is deliberately written with **plain, explicit nested loops** rather
+than vectorized NumPy, so that a later multi-threading/GPU port has
+obvious per-voxel/per-track parallelism to exploit. There are two
+implementations of the same algorithm:
+
+- `pulsed_ion_chamber/solver.py` -- the plain pure-Python reference,
+  easiest to read, ~10x slower.
+- `pulsed_ion_chamber/solver_numba.py` -- **the baseline backend for this
+  repository**: the same loops, JIT-compiled with `@numba.njit`, still
+  single-threaded (no `parallel=True`, no `prange`). This is what
+  `examples/run_pulsed_proton_beam.py` and the package's top-level
+  `run_simulation_numba` actually run.
+
+The two hot loops, `_insert_track`/`_insert_track_numba` (per-track
+Gaussian deposition) and `_lax_wendroff_step`/`_lax_wendroff_step_numba`
+(per-voxel PDE update), are exactly where the original project used
+Cython/Numba/CuPy for a 6-17x (or, on GPU, much larger) speedup, and where
+your next parallelization step (numba `prange`, multiprocessing, or a GPU
+port) should target.
 
 Physics validation (Jaffe theory of initial recombination, Boag theory for
 uniform beams), physical constants (Kanai 1998), and the LET/track-radius
@@ -79,38 +89,31 @@ a huge number of tracks -- so, as in the original repository, only a small,
 statistically-representative cylindrical sub-volume of the chamber is
 simulated explicitly (`sampled_radius_cm`), not the whole active area.
 
-The catch: this port uses **plain Python loops**, which are ~10-100x
-slower than the original's Cython/Numba backends. To keep the default
-example runnable in under a minute, `SimulationConfig()`'s defaults use a
+The catch: even the single-threaded Numba baseline used here is much
+slower than the original's Cython/Numba/CuPy backends (which are tuned,
+and in CuPy's case run on GPU). `SimulationConfig()`'s own defaults use a
 sampled radius of only about one Gaussian track radius and a coarse grid
 (`grid_size_um=40`) -- good enough to validate the solver's mechanics and
 to reproduce Jaffe theory in the single-track limit, but **not**
-dosimetrically converged. `examples/run_pulsed_proton_beam.py` uses
-`pulsed_ion_chamber.benchmark.estimate_full_runtime()` to show, without
-actually running them, how much longer a properly converged sampled volume
-(a few track radii across, per the convergence study documented in the
-original repo's `documentation/README.md`) would take in serial Python --
-typically hours to days. Closing that gap is the point of this repository.
+dosimetrically converged; `examples/run_pulsed_proton_beam.py` uses a
+somewhat finer grid (~2.85 track radii, tuned to ~30s single-threaded).
+`pulsed_ion_chamber.benchmark.estimate_full_runtime()` shows, without
+actually running it, that reaching the fully converged sampled volume used
+in the original repo's convergence study (`documentation/README.md`,
+~6 track radii across) takes on the order of **a few hours**,
+single-threaded Numba -- down from the ~5 days a pure-Python estimate
+gives for the same grid. Closing the remaining gap (hours -> minutes) is
+the point of this repository.
 
 ## Installation
 
-Requires Python >= 3.9. No compiler, no Cython, no GPU needed -- just
-NumPy/SciPy/pandas/mpmath/matplotlib.
+Requires Python >= 3.9 and Numba (the baseline backend). No compiler, no
+Cython, no GPU needed.
 
 ```bash
 python -m venv venv
 source venv/bin/activate
 pip install -e .          # or: pip install -r requirements.txt
-```
-
-The core package (`SimulationConfig`, `run_simulation`, `theory`, ...) only
-needs the dependencies above. `examples/run_pulsed_proton_beam.py` also
-needs Numba, since it runs everything through the single-threaded
-JIT-compiled backend (the plain pure-Python `solver.run_simulation` is
-~10x slower and is not run by the example -- see below):
-
-```bash
-pip install -e ".[numba]"
 ```
 
 ## Usage
@@ -121,39 +124,37 @@ python examples/run_pulsed_proton_beam.py
 
 Takes about 30-45 seconds on a laptop, entirely through
 `pulsed_ion_chamber.solver_numba` (single-threaded: no `parallel=True`, no
-`prange` -- just `@numba.njit` on the same explicit loops as
-`solver.py`). It runs the pulsed-proton scenario on a grid about 2.85
-ion-track-radii wide (tuned to take ~30 s single-threaded; still coarser
-than the ~6-track-radii "converged" grid from the original IonTracks
-study), prints and plots (`pulsed_proton_beam_f_of_t.png`) the collection
-efficiency `f(t)` and recombination correction factor `k_s = 1/f`;
-validates against Jaffe theory in the single-track limit; and prints the
-*estimated* (not actually run) cost of the plain pure-Python backend for
-this same grid, and of a fully converged grid. Expect output along these
-lines:
+`prange` -- just `@numba.njit` on the same explicit loops as `solver.py`).
+It runs the pulsed-proton scenario on a grid about 2.85 ion-track-radii
+wide (tuned to take ~30 s single-threaded; still coarser than the
+~6-track-radii "converged" grid from the original IonTracks study), prints
+and plots (`pulsed_proton_beam_f_of_t.png`) the collection efficiency
+`f(t)` and recombination correction factor `k_s = 1/f`; validates against
+Jaffe theory in the single-track limit; and prints the *estimated* (not
+actually run) single-threaded-Numba cost of reaching a fully converged
+grid. Expect output along these lines:
 
 ```
-Numba compile time (one-off): 0.12 s
-Wall time (numba, single-threaded): 29.2 s
+Numba compile time (one-off): 0.11 s
+Wall time (numba, single-threaded): 30.1 s
 Final collection efficiency f = 0.5344
 Recombination correction factor k_s = 1/f = 1.8713
 ...
 k_s (PDE simulation, numba) = 1.001336
 k_s (Jaffe theory)          = 1.001234
 ...
-  This demo's grid, pure Python (estimated, not run) : ~2259 s (numba single-threaded actually took 29 s -> ~77x)
-  ~6 track radii, converged grid (matches original)  : ...  ~1.2e+02 h serial-Python estimate
+  This demo's grid, numba estimate  : ~29 s (actually took 30 s -- the estimate is a sanity check on the cost model)
+  ~3 track radii, finer grid                                       : ...  ~0.022 h single-threaded numba estimate
+  ~6 track radii, converged grid (matches original IonTracks study): ...  ~3.4 h single-threaded numba estimate
 ```
 
-The pure-Python-vs-numba ratio printed there is an *estimate* (a cost
-model that times a few pure-Python loop iterations and extrapolates, not
-an actual full pure-Python run) and will vary between machines and runs;
-for a controlled, actually-measured comparison of the two backends on a
-small, fast config, see `tests/test_solver_numba.py`, which found ~10x on
-this development machine. Numba's `@njit` alone already buys a solid
-speedup here just from compiling the existing loops, with zero change to
-the algorithm; it's the smallest possible first step before reaching for
-`prange`, multiprocessing, or a GPU backend.
+For a controlled, actually-measured (not estimated) comparison of the
+Numba backend against the plain pure-Python reference on a small, fast
+config, see `tests/test_solver_numba.py` (~10x on this development
+machine). Numba's `@njit` alone already buys a solid speedup here just
+from compiling the existing loops, with zero change to the algorithm --
+turning the remaining hours-scale convergence cost into minutes is the
+next step: `prange`, multiprocessing, or a GPU backend.
 
 ### Running the tests
 
@@ -164,13 +165,12 @@ pytest
 
 All 11 tests finish in a few seconds (they use much smaller grids than the
 default example) and include a check against analytic Jaffe theory in the
-single-track limit, plus a numba-vs-pure-Python correctness check (skipped
-automatically if numba isn't installed).
+single-track limit, plus a numba-vs-pure-Python correctness check.
 
 Programmatic use:
 
 ```python
-from pulsed_ion_chamber import SimulationConfig, run_simulation
+from pulsed_ion_chamber import SimulationConfig, run_simulation_numba
 
 config = SimulationConfig(
     E_MeV_u=150.0,          # proton energy
@@ -184,7 +184,7 @@ config = SimulationConfig(
 )
 print(config.summary())
 
-result = run_simulation(config)
+result = run_simulation_numba(config)  # or run_simulation() for the plain pure-Python reference
 print(result.ks)      # recombination correction factor after full clearance
 print(result.f_t)     # collection efficiency vs. time
 ```
@@ -213,8 +213,8 @@ pulsed_ion_chamber/
   theory.py           Jaffe theory (single track) and Boag theory (uniform density) analytic references
   config.py           SimulationConfig: physical inputs + derived grid/timing quantities
   pulses.py           Pulse-train track scheduling (arrival times, xy positions)
-  solver.py           The explicit-loop Lax-Wendroff PDE solver -- the code to parallelize
-  solver_numba.py     Optional: the same solver with the two hot loops JIT-compiled (single-threaded)
+  solver.py           The plain pure-Python explicit-loop Lax-Wendroff PDE solver (reference implementation)
+  solver_numba.py     The baseline backend: same solver, two hot loops JIT-compiled with numba (single-threaded)
   benchmark.py        Extrapolates full-scenario runtime from a few measured loop iterations
   data/               Packaged LET/stopping-power tables
 examples/
