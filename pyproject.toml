@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pulsed-ion-chamber"
+version = "0.1.0"
+description = "Standalone NumPy/Python simulation of ion recombination in a parallel-plate chamber under a pulsed proton beam"
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "mpmath",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["pulsed_ion_chamber*"]
+
+[tool.setuptools.package-data]
+pulsed_ion_chamber = ["data/*.csv", "data/*.dat"]
