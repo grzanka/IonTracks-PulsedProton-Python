@@ -122,6 +122,27 @@ source venv/bin/activate
 pip install -e .          # or: pip install -r requirements.txt
 ```
 
+### On Cyfronet Helios (PLGrid)
+
+Helios ships Python only as an environment module (no system `python3`
+suitable for a project venv), so load one before creating the
+virtualenv:
+
+```bash
+module load GCCcore/13.3.0 Python/3.12.3   # any Python/3.9+ module works; check `module spider Python`
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -e ".[dev]"                    # editable install + pytest
+```
+
+The `module load` step must be repeated in every new shell/job before
+`source venv/bin/activate` (the venv itself does not remember which
+module it was built with). Verified on Helios (Rocky Linux 9.7) with
+`Python/3.12.3-GCCcore-13.3.0`: `pytest` passes all 14 tests in ~9 s, and
+`python examples/run_pulsed_proton_beam.py` runs in ~28 s single-threaded,
+matching the timings quoted below.
+
 ## Usage
 
 ```bash
@@ -177,7 +198,7 @@ pip install -e ".[dev]"   # or: pip install pytest
 pytest
 ```
 
-All 11 tests finish in a few seconds (they use much smaller grids than the
+All 14 tests finish in a few seconds (they use much smaller grids than the
 default example) and include a check against analytic Jaffe theory in the
 single-track limit, plus a numba-vs-pure-Python correctness check.
 
