@@ -20,9 +20,8 @@ with protons modeled as randomly-placed, randomly-timed Gaussian ion tracks
 
 ## Why this exists / where it came from
 
-This code is extracted and adapted from
-[IonTracks](https://github.com/) (the `IonTracks-Cython` repository,
-J.B. Christensen et al.), which implements the same physics across several
+This code is extracted and adapted from the `IonTracks-Cython` repository
+(J.B. Christensen et al., contact jeppe.christensen@psi.ch), which implements the same physics across several
 backends (Cython, Numba, CuPy) for **continuous** ion beams and for
 **pulsed, spatially-uniform** electron/photon beams. Neither existing
 solver directly covers *pulsed, non-uniform (track-structure) proton
@@ -95,10 +94,13 @@ typically hours to days. Closing that gap is the point of this repository.
 
 ## Installation
 
+Requires Python >= 3.9. No compiler, no Cython, no GPU needed -- just
+NumPy/SciPy/pandas/mpmath/matplotlib.
+
 ```bash
 python -m venv venv
 source venv/bin/activate
-pip install -e .
+pip install -e .          # or: pip install -r requirements.txt
 ```
 
 ## Usage
@@ -107,11 +109,34 @@ pip install -e .
 python examples/run_pulsed_proton_beam.py
 ```
 
-This runs a coarse-grid version of the default pulsed-proton scenario,
-prints and plots the collection efficiency `f(t)` and recombination
-correction factor `k_s = 1/f`, validates against Jaffe theory in the
-single-track limit, and prints the estimated (not actually run) cost of a
-converged version of the same scenario.
+Takes roughly 1-2 minutes on a laptop. It runs a coarse-grid version of the
+default pulsed-proton scenario, prints and plots (`pulsed_proton_beam_f_of_t.png`)
+the collection efficiency `f(t)` and recombination correction factor
+`k_s = 1/f`, validates against Jaffe theory in the single-track limit, and
+prints the estimated (not actually run) cost of a converged version of the
+same scenario. Expect output along these lines:
+
+```
+Final collection efficiency f = 0.6566
+Recombination correction factor k_s = 1/f = 1.5229
+...
+k_s (PDE simulation) = 1.001336
+k_s (Jaffe theory)   = 1.001234
+...
+  coarse (demo above)                              : ...  ~0.014 h serial-Python estimate
+  ~6 track radii, converged grid (matches original) : ...  ~1.6e+02 h serial-Python estimate
+```
+
+### Running the tests
+
+```bash
+pip install -e ".[dev]"   # or: pip install pytest
+pytest
+```
+
+All 8 tests finish in well under 10 seconds (they use even smaller grids
+than the example) and include a check against analytic Jaffe theory in the
+single-track limit.
 
 Programmatic use:
 
