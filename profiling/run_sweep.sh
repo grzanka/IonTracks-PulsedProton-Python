@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 module load GCCcore/13.3.0 Python/3.12.3
 source venv/bin/activate
 
-THREADS=(1 2 4 8 16 32 48 64 96 128 160 190)
+THREADS=(1 16 64 128 190)
 LAYERS=(omp workqueue)
 OUT=profiling/data/thread_sweep.csv
 mkdir -p profiling/data
