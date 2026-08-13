@@ -1,0 +1,48 @@
+         1197522 function calls (1188493 primitive calls) in 25.069 seconds
+
+   Ordered by: cumulative time
+   List reduced from 2943 to 40 due to restriction <40>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000   25.069   25.069 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/profiling/common.py:37(run_once)
+        1   20.360   20.360   24.599   24.599 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/pulsed_ion_chamber/solver_numba_parallel.py:203(run_simulation_numba_parallel)
+   719155    3.741    0.000    3.741    0.000 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/pulsed_ion_chamber/pulses.py:43(sample_xy_inside_cylinder)
+     2041    0.441    0.000    0.445    0.000 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/pulsed_ion_chamber/solver_numba_parallel.py:183(_precompute_track_gaussians)
+   422/54    0.002    0.000    0.341    0.006 <frozen importlib._bootstrap>:1349(_find_and_load)
+   413/45    0.001    0.000    0.340    0.008 <frozen importlib._bootstrap>:1304(_find_and_load_unlocked)
+   972/54    0.001    0.000    0.336    0.006 <frozen importlib._bootstrap>:480(_call_with_frames_removed)
+   400/44    0.001    0.000    0.336    0.008 <frozen importlib._bootstrap>:911(_load_unlocked)
+   348/43    0.001    0.000    0.334    0.008 <frozen importlib._bootstrap_external>:989(exec_module)
+   368/43    0.003    0.000    0.317    0.007 {built-in method builtins.exec}
+        1    0.018    0.018    0.242    0.242 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/pulsed_ion_chamber/solver_numba_parallel.py:193(warmup_parallel)
+        1    0.000    0.000    0.227    0.227 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/profiling/common.py:33(build_converged_config)
+        1    0.000    0.000    0.227    0.227 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/pulsed_ion_chamber/config.py:80(__post_init__)
+        2    0.000    0.000    0.226    0.113 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/pulsed_ion_chamber/stopping_power.py:18(E_MeV_u_to_LET_keV_um)
+        2    0.000    0.000    0.223    0.112 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/numba/core/dispatcher.py:342(_compile_for_args)
+        1    0.000    0.000    0.221    0.221 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/pandas/__init__.py:1(<module>)
+        2    0.000    0.000    0.218    0.109 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/numba/core/dispatcher.py:860(compile)
+        2    0.000    0.000    0.217    0.109 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/numba/core/caching.py:713(load_overload)
+   119/74    0.000    0.000    0.209    0.003 {built-in method builtins.__import__}
+    253/2    0.000    0.000    0.198    0.099 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/numba/core/base.py:261(refresh)
+5826/5442    0.004    0.000    0.193    0.000 <frozen importlib._bootstrap>:1390(_handle_fromlist)
+      253    0.002    0.000    0.155    0.001 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/numba/core/cpu.py:102(load_additional_registries)
+      348    0.002    0.000    0.125    0.000 <frozen importlib._bootstrap_external>:1062(get_code)
+        1    0.000    0.000    0.121    0.121 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/pandas/core/api.py:1(<module>)
+      348    0.001    0.000    0.070    0.000 <frozen importlib._bootstrap_external>:1183(get_data)
+        1    0.000    0.000    0.069    0.069 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/pandas/core/groupby/__init__.py:1(<module>)
+        1    0.000    0.000    0.068    0.068 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/pandas/core/groupby/generic.py:1(<module>)
+    253/2    0.000    0.000    0.066    0.033 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/numba/core/typing/context.py:232(refresh)
+    253/2    0.000    0.000    0.059    0.029 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/numba/core/typing/context.py:482(_load_builtins)
+  2277/18    0.006    0.000    0.058    0.003 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/numba/core/typing/context.py:495(install_registry)
+        1    0.000    0.000    0.055    0.055 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/pandas/core/frame.py:1(<module>)
+      251    0.000    0.000    0.053    0.000 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/numba/core/typing/templates.py:1054(__init__)
+      348    0.052    0.000    0.052    0.000 {built-in method _io.open_code}
+      244    0.000    0.000    0.051    0.000 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/numba/core/typing/templates.py:1100(_init_once)
+      251    0.000    0.000    0.050    0.000 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/numba/core/typing/templates.py:907(_get_target_registry)
+     1031    0.002    0.000    0.044    0.000 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/numba/core/extending.py:137(decorate)
+      348    0.005    0.000    0.042    0.000 <frozen importlib._bootstrap_external>:751(_compile_bytecode)
+    50/26    0.000    0.000    0.042    0.002 <frozen importlib._bootstrap_external>:1295(exec_module)
+    50/26    0.011    0.000    0.041    0.002 {built-in method _imp.exec_dynamic}
+        1    0.000    0.000    0.039    0.039 /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/venv/lib/python3.12/site-packages/pandas/core/config_init.py:1(<module>)
+
+

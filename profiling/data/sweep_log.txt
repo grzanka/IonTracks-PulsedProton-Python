@@ -1,0 +1,60 @@
+ GCCcore/13.3.0 loaded.
+ zlib/1.3.1 loaded.
+ binutils/2.42 loaded.
+ bzip2/1.0.8 loaded.
+ ncurses/6.5 loaded.
+ libreadline/8.2 loaded.
+ Tcl/8.6.14 loaded.
+ SQLite/3.45.3 loaded.
+ XZ/5.4.5 loaded.
+ libffi/3.4.5 loaded.
+ OpenSSL/3 loaded.
+ Python/3.12.3 loaded.
+=== layer=omp threads=1 ===
+threads=1 layer=omp affinity=1 wall_s=25.30 ks=1.930486 nvcsw=4 nivcsw=1848
+=== layer=omp threads=2 ===
+threads=2 layer=omp affinity=2 wall_s=16.33 ks=1.930486 nvcsw=90 nivcsw=1136
+=== layer=omp threads=4 ===
+threads=4 layer=omp affinity=4 wall_s=12.63 ks=1.930486 nvcsw=246 nivcsw=1051
+=== layer=omp threads=8 ===
+threads=8 layer=omp affinity=8 wall_s=17.40 ks=1.930486 nvcsw=9730 nivcsw=5922
+=== layer=omp threads=16 ===
+threads=16 layer=omp affinity=16 wall_s=19.78 ks=1.930486 nvcsw=30913 nivcsw=1270
+=== layer=omp threads=32 ===
+threads=32 layer=omp affinity=32 wall_s=21.03 ks=1.930486 nvcsw=61855 nivcsw=898
+=== layer=omp threads=48 ===
+threads=48 layer=omp affinity=48 wall_s=19.73 ks=1.930486 nvcsw=99755 nivcsw=1285
+=== layer=omp threads=64 ===
+threads=64 layer=omp affinity=64 wall_s=19.17 ks=1.930486 nvcsw=141671 nivcsw=1716
+=== layer=omp threads=96 ===
+threads=96 layer=omp affinity=96 wall_s=22.64 ks=1.930486 nvcsw=208725 nivcsw=2172
+=== layer=omp threads=128 ===
+threads=128 layer=omp affinity=128 wall_s=77.52 ks=1.930486 nvcsw=571807 nivcsw=6566
+=== layer=omp threads=160 ===
+threads=160 layer=omp affinity=160 wall_s=76.08 ks=1.930486 nvcsw=568261 nivcsw=8778
+=== layer=omp threads=190 ===
+threads=190 layer=omp affinity=190 wall_s=41.16 ks=1.930486 nvcsw=476244 nivcsw=7750
+=== layer=workqueue threads=1 ===
+threads=1 layer=workqueue affinity=1 wall_s=23.55 ks=1.930486 nvcsw=36283 nivcsw=36624
+=== layer=workqueue threads=2 ===
+threads=2 layer=workqueue affinity=2 wall_s=18.15 ks=1.930486 nvcsw=38772 nivcsw=1619
+=== layer=workqueue threads=4 ===
+threads=4 layer=workqueue affinity=4 wall_s=14.77 ks=1.930486 nvcsw=79003 nivcsw=184
+=== layer=workqueue threads=8 ===
+threads=8 layer=workqueue affinity=8 wall_s=11.83 ks=1.930486 nvcsw=155145 nivcsw=95
+=== layer=workqueue threads=16 ===
+threads=16 layer=workqueue affinity=16 wall_s=19.59 ks=1.930486 nvcsw=309201 nivcsw=162
+=== layer=workqueue threads=32 ===
+threads=32 layer=workqueue affinity=32 wall_s=18.62 ks=1.930486 nvcsw=600708 nivcsw=19289
+=== layer=workqueue threads=48 ===
+threads=48 layer=workqueue affinity=48 wall_s=19.37 ks=1.930486 nvcsw=895678 nivcsw=8307
+=== layer=workqueue threads=64 ===
+threads=64 layer=workqueue affinity=64 wall_s=22.22 ks=1.930486 nvcsw=1178570 nivcsw=4398
+=== layer=workqueue threads=96 ===
+threads=96 layer=workqueue affinity=96 wall_s=21.38 ks=1.930486 nvcsw=1755714 nivcsw=17960
+=== layer=workqueue threads=128 ===
+threads=128 layer=workqueue affinity=128 wall_s=34.23 ks=1.930486 nvcsw=2335557 nivcsw=4658
+=== layer=workqueue threads=160 ===
+threads=160 layer=workqueue affinity=160 wall_s=35.32 ks=1.930486 nvcsw=2908554 nivcsw=21160
+=== layer=workqueue threads=190 ===
+threads=190 layer=workqueue affinity=190 wall_s=37.61 ks=1.930486 nvcsw=3455074 nivcsw=11531

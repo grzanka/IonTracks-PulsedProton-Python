@@ -1,0 +1,14 @@
+[
+  {
+    "num_threads": 1,
+    "ks_simulation": 1.0013362019262158,
+    "ks_jaffe": 1.0012341579794375,
+    "relative_error": 0.00010191816366332829
+  },
+  {
+    "num_threads": 96,
+    "ks_simulation": 1.0013362019262158,
+    "ks_jaffe": 1.0012341579794375,
+    "relative_error": 0.00010191816366332829
+  }
+]

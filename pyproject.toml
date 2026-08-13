@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+profiling = ["py-spy"]
 
 [tool.setuptools.packages.find]
 include = ["pulsed_ion_chamber*"]

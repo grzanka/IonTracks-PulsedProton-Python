@@ -1,0 +1,476 @@
+=== numba.threading_layer() ===
+omp
+
+=== os.sched_getaffinity(0) ===
+cpus = [0, 1, 2, 3, 4, 5, 6, 7]
+len = 8
+
+=== SLURM env (job/cpu sizing only) ===
+SLURM_CLUSTER_NAME=helios
+SLURM_CONF=/etc/slurm/slurm.conf
+SLURM_CPUS_ON_NODE=8
+SLURM_CPUS_PER_TASK=8
+SLURM_CPU_BIND=quiet,mask_cpu:0x0000000000000000000000000000000000000000000000FF
+SLURM_CPU_BIND_TYPE=mask_cpu:
+SLURM_CPU_BIND_VERBOSE=quiet
+SLURM_DISTRIBUTION=cyclic
+SLURM_JOBID=20646752
+SLURM_JOB_ACCOUNT=plgccbmc15-cpu
+SLURM_JOB_CPUS_PER_NODE=190
+SLURM_JOB_END_TIME=1786618606
+SLURM_JOB_GID=100000
+SLURM_JOB_GROUP=plgrid
+SLURM_JOB_ID=20646752
+SLURM_JOB_NAME=bash
+SLURM_JOB_NODELIST=x1000c2s0b0n1
+SLURM_JOB_NUM_NODES=1
+SLURM_JOB_PARTITION=plgrid
+SLURM_JOB_QOS=normal
+SLURM_JOB_START_TIME=1786609606
+SLURM_JOB_UID=100705
+SLURM_JOB_USER=plgkongruencj
+SLURM_LAUNCH_NODE_IPADDR=172.25.1.102
+SLURM_LOCALID=0
+SLURM_MPI_TYPE=cray_shasta
+SLURM_NNODES=1
+SLURM_NODEID=0
+SLURM_NODELIST=x1000c2s0b0n1
+SLURM_NPROCS=1
+SLURM_NTASKS=1
+SLURM_OOM_KILL_STEP=0
+SLURM_PRIO_PROCESS=0
+SLURM_PROCID=0
+SLURM_PTY_PORT=45719
+SLURM_PTY_WIN_COL=248
+SLURM_PTY_WIN_ROW=61
+SLURM_SCRIPT_CONTEXT=prolog_task
+SLURM_SRUN_COMM_HOST=172.25.1.102
+SLURM_SRUN_COMM_PORT=45137
+SLURM_STEPID=3
+SLURM_STEP_ID=3
+SLURM_STEP_LAUNCHER_PORT=45137
+SLURM_STEP_NODELIST=x1000c2s0b0n1
+SLURM_STEP_NUM_NODES=1
+SLURM_STEP_NUM_TASKS=1
+SLURM_STEP_RESV_PORTS=31348-31349
+SLURM_STEP_TASKS_PER_NODE=1
+SLURM_SUBMIT_DIR=/net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python
+SLURM_SUBMIT_HOST=login01.helios.cyfronet.pl
+SLURM_TASKS_PER_NODE=1
+SLURM_TASK_PID=662016
+SLURM_TOPOLOGY_ADDR=x1000c2s0b0n1
+SLURM_TOPOLOGY_ADDR_PATTERN=node
+SLURM_TRES_PER_TASK=cpu=8
+SLURM_UMASK=0022
+
+=== numactl --hardware ===
+available: 8 nodes (0-7)
+node 0 cpus: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
+node 0 size: 47663 MB
+node 0 free: 42221 MB
+node 1 cpus: 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47
+node 1 size: 48377 MB
+node 1 free: 47839 MB
+node 2 cpus: 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71
+node 2 size: 48377 MB
+node 2 free: 46866 MB
+node 3 cpus: 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95
+node 3 size: 48377 MB
+node 3 free: 47710 MB
+node 4 cpus: 96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111 112 113 114 115 116 117 118 119
+node 4 size: 48377 MB
+node 4 free: 47775 MB
+node 5 cpus: 120 121 122 123 124 125 126 127 128 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143
+node 5 size: 48377 MB
+node 5 free: 47731 MB
+node 6 cpus: 144 145 146 147 148 149 150 151 152 153 154 155 156 157 158 159 160 161 162 163 164 165 166 167
+node 6 size: 48332 MB
+node 6 free: 46766 MB
+node 7 cpus: 168 169 170 171 172 173 174 175 176 177 178 179 180 181 182 183 184 185 186 187 188 189 190 191
+node 7 size: 48315 MB
+node 7 free: 47457 MB
+node distances:
+node     0    1    2    3    4    5    6    7 
+   0:   10   12   12   12   32   32   32   32 
+   1:   12   10   12   12   32   32   32   32 
+   2:   12   12   10   12   32   32   32   32 
+   3:   12   12   12   10   32   32   32   32 
+   4:   32   32   32   32   10   12   12   12 
+   5:   32   32   32   32   12   10   12   12 
+   6:   32   32   32   32   12   12   10   12 
+   7:   32   32   32   32   12   12   12   10 
+
+=== lscpu ===
+Architecture:                            x86_64
+CPU op-mode(s):                          32-bit, 64-bit
+Address sizes:                           52 bits physical, 57 bits virtual
+Byte Order:                              Little Endian
+CPU(s):                                  192
+On-line CPU(s) list:                     0-191
+Vendor ID:                               AuthenticAMD
+Model name:                              AMD EPYC 9654 96-Core Processor
+CPU family:                              25
+Model:                                   17
+Thread(s) per core:                      1
+Core(s) per socket:                      96
+Socket(s):                               2
+Stepping:                                1
+Frequency boost:                         enabled
+CPU(s) scaling MHz:                      67%
+CPU max MHz:                             3709.3569
+CPU min MHz:                             1500.0000
+BogoMIPS:                                4792.67
+Flags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good amd_lbr_v2 nopl xtopology nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpb cat_l3 cdp_l3 hw_pstate ssbd mba perfmon_v2 ibrs ibpb stibp ibrs_enhanced vmmcall fsgsbase bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local user_shstk avx512_bf16 clzero irperf xsaveerptr rdpru wbnoinvd amd_ppin cppc arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic v_vmsave_vmload vgif x2avic v_spec_ctrl vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq la57 rdpid overflow_recov succor smca fsrm flush_l1d debug_swap
+Virtualization:                          AMD-V
+L1d cache:                               6 MiB (192 instances)
+L1i cache:                               6 MiB (192 instances)
+L2 cache:                                192 MiB (192 instances)
+L3 cache:                                768 MiB (24 instances)
+NUMA node(s):                            8
+NUMA node0 CPU(s):                       0-23
+NUMA node1 CPU(s):                       24-47
+NUMA node2 CPU(s):                       48-71
+NUMA node3 CPU(s):                       72-95
+NUMA node4 CPU(s):                       96-119
+NUMA node5 CPU(s):                       120-143
+NUMA node6 CPU(s):                       144-167
+NUMA node7 CPU(s):                       168-191
+Vulnerability Gather data sampling:      Not affected
+Vulnerability Indirect target selection: Not affected
+Vulnerability Itlb multihit:             Not affected
+Vulnerability L1tf:                      Not affected
+Vulnerability Mds:                       Not affected
+Vulnerability Meltdown:                  Not affected
+Vulnerability Mmio stale data:           Not affected
+Vulnerability Old microcode:             Not affected
+Vulnerability Reg file data sampling:    Not affected
+Vulnerability Retbleed:                  Not affected
+Vulnerability Spec rstack overflow:      Mitigation; Safe RET
+Vulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl
+Vulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization
+Vulnerability Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; STIBP disabled; PBRSB-eIBRS Not affected; BHI Not affected
+Vulnerability Srbds:                     Not affected
+Vulnerability Tsa:                       Mitigation; Clear CPU buffers
+Vulnerability Tsx async abort:           Not affected
+Vulnerability Vmscape:                   Mitigation; IBPB before exit to userspace
+
+=== parallel_diagnostics: _insert_tracks_step_numba_parallel ===
+ 
+================================================================================
+ Parallel Accelerator Optimizing:  Function _insert_tracks_step_numba_parallel, 
+/net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-
+Python/pulsed_ion_chamber/solver_numba_parallel.py (79)  
+================================================================================
+
+
+Parallel loop listing for  Function _insert_tracks_step_numba_parallel, /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/pulsed_ion_chamber/solver_numba_parallel.py (79) 
+------------------------------------------------------------------------------------|loop #ID
+@numba.njit(parallel=True, cache=True)                                              | 
+def _insert_tracks_step_numba_parallel(                                             | 
+    positive_array: FloatArray3D,                                                   | 
+    negative_array: FloatArray3D,                                                   | 
+    gauss_i: FloatArray2D,  # shape (n_tracks, no_xy): gauss_i[t, i] for track t    | 
+    gauss_j: FloatArray2D,  # shape (n_tracks, no_xy): gauss_j[t, j] for track t    | 
+    no_xy: int,                                                                     | 
+    no_z: int,                                                                      | 
+    no_z_electrode: int,                                                            | 
+    gaussian_factor: float,                                                         | 
+    mid_xy: int,                                                                    | 
+    inner_radius_sq: float,                                                         | 
+) -> float:                                                                         | 
+    """Deposit ALL of one time step's tracks in a single pass over the grid.        | 
+                                                                                    | 
+    Same separable-Gaussian identity as _insert_track_numba (exp(a+b) =             | 
+    exp(a)*exp(b)), but summed over tracks *before* the O(no_z) broadcast           | 
+    into every z-layer, instead of once per track -- see module docstring.          | 
+    """                                                                             | 
+    n_tracks = gauss_i.shape[0]                                                     | 
+    k_lo = no_z_electrode                                                           | 
+    k_hi = no_z_electrode + no_z                                                    | 
+                                                                                    | 
+    inserted = 0.0                                                                  | 
+    for idx in prange(no_xy * no_xy):-----------------------------------------------| #0
+        i = idx // no_xy                                                            | 
+        j = idx % no_xy                                                             | 
+        di_sq = (i - mid_xy) ** 2                                                   | 
+                                                                                    | 
+        total_density = 0.0                                                         | 
+        for t in range(n_tracks):                                                   | 
+            total_density += gauss_i[t, i] * gauss_j[t, j]                          | 
+        total_density *= gaussian_factor                                            | 
+                                                                                    | 
+        for k in range(k_lo, k_hi):                                                 | 
+            positive_array[i, j, k] += total_density                                | 
+            negative_array[i, j, k] += total_density                                | 
+        if di_sq + (j - mid_xy) ** 2 < inner_radius_sq:                             | 
+            inserted += total_density * no_z                                        | 
+                                                                                    | 
+    return inserted                                                                 | 
+--------------------------------- Fusing loops ---------------------------------
+Attempting fusion of parallel loops (combines loops with similar properties)...
+----------------------------- Before Optimisation ------------------------------
+--------------------------------------------------------------------------------
+------------------------------ After Optimisation ------------------------------
+Parallel structure is already optimal.
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+ 
+---------------------------Loop invariant code motion---------------------------
+Allocation hoisting:
+No allocation hoisting found
+
+Instruction hoisting:
+loop #0:
+  Has the following hoisted:
+    $204load_global.6 = global(range: <class 'range'>)
+    $const312.7.3 = const(int, 2)
+    $bool328 = global(bool: <class 'bool'>)
+    $const114.11.3 = const(int, 2)
+    total_density = const(float, 0.0)
+    $126load_global.14 = global(range: <class 'range'>)
+  Failed to hoist the following:
+    dependency: $total_density.2.22 = inplace_binop(fn=<built-in function imul>, immutable_fn=<built-in function mul>, lhs=total_density.3, rhs=gaussian__factor, static_lhs=Undefined, static_rhs=Undefined)
+    not pure: $218call.10 = call $push_global_to_block.43(no__z__electrode, k__hi, func=$push_global_to_block.43, args=[Var(no__z__electrode, solver_numba_parallel.py:79), Var(k__hi, solver_numba_parallel.py:100)], kws=(), vararg=None, varkwarg=None, target=None)
+    dependency: $226get_iter.11 = getiter(value=$218call.10)
+    dependency: $228for_iter.2 = iternext(value=$226get_iter.11)
+    dependency: $k.23 = pair_first(value=$228for_iter.2)
+    dependency: $228for_iter.4 = pair_second(value=$228for_iter.2)
+    dependency: $242build_tuple.7 = build_tuple(items=[Var(i, solver_numba_parallel.py:104), Var(j, solver_numba_parallel.py:105), Var($k.23, solver_numba_parallel.py:113)])
+    dependency: $248binary_subscr.8 = getitem(value=positive__array, index=$242build_tuple.7, fn=<built-in function getitem>)
+    dependency: $binop_iadd254.10 = inplace_binop(fn=<built-in function iadd>, immutable_fn=<built-in function add>, lhs=$248binary_subscr.8, rhs=$total_density.2.22, static_lhs=Undefined, static_rhs=Undefined)
+    dependency: $274build_tuple.15 = build_tuple(items=[Var(i, solver_numba_parallel.py:104), Var(j, solver_numba_parallel.py:105), Var($k.23, solver_numba_parallel.py:113)])
+    dependency: $280binary_subscr.16 = getitem(value=negative__array, index=$274build_tuple.15, fn=<built-in function getitem>)
+    dependency: $binop_iadd286.18 = inplace_binop(fn=<built-in function iadd>, immutable_fn=<built-in function add>, lhs=$280binary_subscr.16, rhs=$total_density.2.22, static_lhs=Undefined, static_rhs=Undefined)
+    dependency: $binop_mul338.4 = $total_density.2.22 * no__z
+    dependency: $inserted.3.50 = inplace_binop(fn=<built-in function iadd>, immutable_fn=<built-in function add>, lhs=inserted_2, rhs=$binop_mul338.4, static_lhs=Undefined, static_rhs=Undefined)
+    dependency: $binop_sub308.6 = j - mid__xy
+    dependency: $binop_pow314.8 = $binop_sub308.6 ** $const312.7.3
+    dependency: $binop_add318.9 = di_sq + $binop_pow314.8
+    dependency: $324compare_op.11 = $binop_add318.9 < inner__radius__sq
+    dependency: $328pred = call $push_global_to_block.44($324compare_op.11, func=$push_global_to_block.44, args=(Var($324compare_op.11, solver_numba_parallel.py:116),), kws=(), vararg=None, varkwarg=None, target=None)
+    dependency: $148for_iter.2 = iternext(value=$146get_iter.18)
+    dependency: $t.25 = pair_first(value=$148for_iter.2)
+    dependency: $148for_iter.4 = pair_second(value=$148for_iter.2)
+    dependency: idx = $parfor__index_19.46
+    dependency: i = $parfor__index_19.46 // no__xy
+    dependency: j = $parfor__index_19.46 % no__xy
+    dependency: $binop_sub110.10 = i - mid__xy
+    dependency: di_sq = $binop_sub110.10 ** $const114.11.3
+    not pure: $138call.17 = call $push_global_to_block.45(n__tracks, func=$push_global_to_block.45, args=[Var(n__tracks, solver_numba_parallel.py:98)], kws=(), vararg=None, varkwarg=None, target=None)
+    dependency: $146get_iter.18 = getiter(value=$138call.17)
+    dependency: $162build_tuple.7 = build_tuple(items=[Var($t.25, solver_numba_parallel.py:109), Var(i, solver_numba_parallel.py:104)])
+    dependency: $164binary_subscr.8 = getitem(value=gauss__i, index=$162build_tuple.7, fn=<built-in function getitem>)
+    dependency: $174build_tuple.12 = build_tuple(items=[Var($t.25, solver_numba_parallel.py:109), Var(j, solver_numba_parallel.py:105)])
+    dependency: $176binary_subscr.13 = getitem(value=gauss__j, index=$174build_tuple.12, fn=<built-in function getitem>)
+    dependency: $binop_mul180.14 = $164binary_subscr.8 * $176binary_subscr.13
+    dependency: $total_density.3.51 = inplace_binop(fn=<built-in function iadd>, immutable_fn=<built-in function add>, lhs=total_density.3, rhs=$binop_mul180.14, static_lhs=Undefined, static_rhs=Undefined)
+    dependency: inserted_2 = inserted.3
+--------------------------------------------------------------------------------
+
+=== parallel_diagnostics: _lax_wendroff_step_numba_parallel ===
+ 
+================================================================================
+ Parallel Accelerator Optimizing:  Function _lax_wendroff_step_numba_parallel, 
+/net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-
+Python/pulsed_ion_chamber/solver_numba_parallel.py (122)  
+================================================================================
+
+
+Parallel loop listing for  Function _lax_wendroff_step_numba_parallel, /net/scratch/hscra/plgrid/plgkongruencj/IonTracks-PulsedProton-Python/pulsed_ion_chamber/solver_numba_parallel.py (122) 
+---------------------------------------------------------------------------|loop #ID
+@numba.njit(parallel=True, cache=True)                                     | 
+def _lax_wendroff_step_numba_parallel(                                     | 
+    positive_array: FloatArray3D,                                          | 
+    negative_array: FloatArray3D,                                          | 
+    positive_next: FloatArray3D,                                           | 
+    negative_next: FloatArray3D,                                           | 
+    no_xy: int,                                                            | 
+    no_z_with_buffer: int,                                                 | 
+    no_z_electrode: int,                                                   | 
+    no_z: int,                                                             | 
+    mid_xy: int,                                                           | 
+    inner_radius_sq: float,                                                | 
+    sx: float,                                                             | 
+    sc_pos_z: float,                                                       | 
+    sc_neg_z: float,                                                       | 
+    sc_center: float,                                                      | 
+    alpha_dt: float,                                                       | 
+) -> float:                                                                | 
+    """Same as _lax_wendroff_step_numba, parallel over the flattened       | 
+    (i, j) index (see module docstring for why not `i` alone)."""          | 
+    recombined = 0.0                                                       | 
+    n_inner = no_xy - 2                                                    | 
+    for idx in prange(n_inner * n_inner):----------------------------------| #1
+        i = 1 + idx // n_inner                                             | 
+        j = 1 + idx % n_inner                                              | 
+        di_sq = (i - mid_xy) ** 2                                          | 
+        inside = di_sq + (j - mid_xy) ** 2 < inner_radius_sq               | 
+                                                                           | 
+        for k in range(1, no_z_with_buffer - 1):                           | 
+            p = positive_array[i, j, k]                                    | 
+            n = negative_array[i, j, k]                                    | 
+                                                                           | 
+            p_new = (                                                      | 
+                sc_pos_z * positive_array[i, j, k - 1]                     | 
+                + sc_neg_z * positive_array[i, j, k + 1]                   | 
+                + sx * positive_array[i, j - 1, k]                         | 
+                + sx * positive_array[i, j + 1, k]                         | 
+                + sx * positive_array[i - 1, j, k]                         | 
+                + sx * positive_array[i + 1, j, k]                         | 
+                + sc_center * p                                            | 
+            )                                                              | 
+            n_new = (                                                      | 
+                sc_pos_z * negative_array[i, j, k + 1]                     | 
+                + sc_neg_z * negative_array[i, j, k - 1]                   | 
+                + sx * negative_array[i, j - 1, k]                         | 
+                + sx * negative_array[i, j + 1, k]                         | 
+                + sx * negative_array[i - 1, j, k]                         | 
+                + sx * negative_array[i + 1, j, k]                         | 
+                + sc_center * n                                            | 
+            )                                                              | 
+                                                                           | 
+            recomb = alpha_dt * p * n                                      | 
+            positive_next[i, j, k] = p_new - recomb                        | 
+            negative_next[i, j, k] = n_new - recomb                        | 
+                                                                           | 
+            if inside and no_z_electrode < k < (no_z + no_z_electrode):    | 
+                recombined += recomb                                       | 
+                                                                           | 
+    return recombined                                                      | 
+--------------------------------- Fusing loops ---------------------------------
+Attempting fusion of parallel loops (combines loops with similar properties)...
+----------------------------- Before Optimisation ------------------------------
+--------------------------------------------------------------------------------
+------------------------------ After Optimisation ------------------------------
+Parallel structure is already optimal.
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+ 
+---------------------------Loop invariant code motion---------------------------
+Allocation hoisting:
+No allocation hoisting found
+
+Instruction hoisting:
+loop #1:
+  Has the following hoisted:
+    $bool658 = global(bool: <class 'bool'>)
+    $const210.20.3 = const(int, 1)
+    $const236.30.3 = const(int, 1)
+    $const264.40.3 = const(int, 1)
+    $const294.51.3 = const(int, 1)
+    $const322.61.3 = const(int, 1)
+    $const352.72.3 = const(int, 1)
+    $const400.89.3 = const(int, 1)
+    $const426.99.3 = const(int, 1)
+    $const454.109.3 = const(int, 1)
+    $const484.120.3 = const(int, 1)
+    $const512.130.3 = const(int, 1)
+    $const542.141.3 = const(int, 1)
+    $bool642 = global(bool: <class 'bool'>)
+    $binop_add664.5 = no__z + no__z__electrode
+    $bool672 = global(bool: <class 'bool'>)
+    $const54.2.3 = const(int, 1)
+    $const70.7.3 = const(int, 1)
+    $const94.15.2 = const(int, 2)
+    $const112.21.2 = const(int, 2)
+    $130load_global.26 = global(range: <class 'range'>)
+    $const140.28.3 = const(int, 1)
+    $const144.30.3 = const(int, 1)
+    $binop_sub146.31 = no__z__with__buffer - $const144.30.3
+  Failed to hoist the following:
+    dependency: $162for_iter.2 = iternext(value=$158get_iter.33)
+    dependency: $k.88 = pair_first(value=$162for_iter.2)
+    dependency: $162for_iter.4 = pair_second(value=$162for_iter.2)
+    dependency: recombined_4 = recombined.2
+    dependency: $654compare_op.4 = no__z__electrode < $k.88
+    dependency: $658pred = call $push_global_to_block.104($654compare_op.4, func=$push_global_to_block.104, args=(Var($654compare_op.4, solver_numba_parallel.py:177),), kws=(), vararg=None, varkwarg=None, target=None)
+    dependency: $176build_tuple.7 = build_tuple(items=[Var(i, solver_numba_parallel.py:145), Var(j, solver_numba_parallel.py:146), Var($k.88, solver_numba_parallel.py:150)])
+    dependency: p = getitem(value=positive__array, index=$176build_tuple.7, fn=<built-in function getitem>)
+    dependency: $192build_tuple.13 = build_tuple(items=[Var(i, solver_numba_parallel.py:145), Var(j, solver_numba_parallel.py:146), Var($k.88, solver_numba_parallel.py:150)])
+    dependency: n = getitem(value=negative__array, index=$192build_tuple.13, fn=<built-in function getitem>)
+    dependency: $binop_sub212.21 = $k.88 - $const210.20.3
+    dependency: $216build_tuple.22 = build_tuple(items=[Var(i, solver_numba_parallel.py:145), Var(j, solver_numba_parallel.py:146), Var($binop_sub212.21, solver_numba_parallel.py:155)])
+    dependency: $218binary_subscr.23 = getitem(value=positive__array, index=$216build_tuple.22, fn=<built-in function getitem>)
+    dependency: $binop_mul222.24 = sc__pos__z * $218binary_subscr.23
+    dependency: $binop_add238.31 = $k.88 + $const236.30.3
+    dependency: $242build_tuple.32 = build_tuple(items=[Var(i, solver_numba_parallel.py:145), Var(j, solver_numba_parallel.py:146), Var($binop_add238.31, solver_numba_parallel.py:156)])
+    dependency: $244binary_subscr.33 = getitem(value=positive__array, index=$242build_tuple.32, fn=<built-in function getitem>)
+    dependency: $binop_mul248.34 = sc__neg__z * $244binary_subscr.33
+    dependency: $binop_add252.35 = $binop_mul222.24 + $binop_mul248.34
+    dependency: $binop_sub266.41 = j - $const264.40.3
+    dependency: $272build_tuple.43 = build_tuple(items=[Var(i, solver_numba_parallel.py:145), Var($binop_sub266.41, solver_numba_parallel.py:157), Var($k.88, solver_numba_parallel.py:150)])
+    dependency: $274binary_subscr.44 = getitem(value=positive__array, index=$272build_tuple.43, fn=<built-in function getitem>)
+    dependency: $binop_mul278.45 = sx * $274binary_subscr.44
+    dependency: $binop_add282.46 = $binop_add252.35 + $binop_mul278.45
+    dependency: $binop_add296.52 = j + $const294.51.3
+    dependency: $302build_tuple.54 = build_tuple(items=[Var(i, solver_numba_parallel.py:145), Var($binop_add296.52, solver_numba_parallel.py:158), Var($k.88, solver_numba_parallel.py:150)])
+    dependency: $304binary_subscr.55 = getitem(value=positive__array, index=$302build_tuple.54, fn=<built-in function getitem>)
+    dependency: $binop_mul308.56 = sx * $304binary_subscr.55
+    dependency: $binop_add312.57 = $binop_add282.46 + $binop_mul308.56
+    dependency: $binop_sub324.62 = i - $const322.61.3
+    dependency: $332build_tuple.65 = build_tuple(items=[Var($binop_sub324.62, solver_numba_parallel.py:159), Var(j, solver_numba_parallel.py:146), Var($k.88, solver_numba_parallel.py:150)])
+    dependency: $334binary_subscr.66 = getitem(value=positive__array, index=$332build_tuple.65, fn=<built-in function getitem>)
+    dependency: $binop_mul338.67 = sx * $334binary_subscr.66
+    dependency: $binop_add342.68 = $binop_add312.57 + $binop_mul338.67
+    dependency: $binop_add354.73 = i + $const352.72.3
+    dependency: $362build_tuple.76 = build_tuple(items=[Var($binop_add354.73, solver_numba_parallel.py:160), Var(j, solver_numba_parallel.py:146), Var($k.88, solver_numba_parallel.py:150)])
+    dependency: $364binary_subscr.77 = getitem(value=positive__array, index=$362build_tuple.76, fn=<built-in function getitem>)
+    dependency: $binop_mul368.78 = sx * $364binary_subscr.77
+    dependency: $binop_add372.79 = $binop_add342.68 + $binop_mul368.78
+    dependency: $binop_mul380.82 = sc__center * p
+    dependency: p_new = $binop_add372.79 + $binop_mul380.82
+    dependency: $binop_add402.90 = $k.88 + $const400.89.3
+    dependency: $406build_tuple.91 = build_tuple(items=[Var(i, solver_numba_parallel.py:145), Var(j, solver_numba_parallel.py:146), Var($binop_add402.90, solver_numba_parallel.py:164)])
+    dependency: $408binary_subscr.92 = getitem(value=negative__array, index=$406build_tuple.91, fn=<built-in function getitem>)
+    dependency: $binop_mul412.93 = sc__pos__z * $408binary_subscr.92
+    dependency: $binop_sub428.100 = $k.88 - $const426.99.3
+    dependency: $432build_tuple.101 = build_tuple(items=[Var(i, solver_numba_parallel.py:145), Var(j, solver_numba_parallel.py:146), Var($binop_sub428.100, solver_numba_parallel.py:165)])
+    dependency: $434binary_subscr.102 = getitem(value=negative__array, index=$432build_tuple.101, fn=<built-in function getitem>)
+    dependency: $binop_mul438.103 = sc__neg__z * $434binary_subscr.102
+    dependency: $binop_add442.104 = $binop_mul412.93 + $binop_mul438.103
+    dependency: $binop_sub456.110 = j - $const454.109.3
+    dependency: $462build_tuple.112 = build_tuple(items=[Var(i, solver_numba_parallel.py:145), Var($binop_sub456.110, solver_numba_parallel.py:166), Var($k.88, solver_numba_parallel.py:150)])
+    dependency: $464binary_subscr.113 = getitem(value=negative__array, index=$462build_tuple.112, fn=<built-in function getitem>)
+    dependency: $binop_mul468.114 = sx * $464binary_subscr.113
+    dependency: $binop_add472.115 = $binop_add442.104 + $binop_mul468.114
+    dependency: $binop_add486.121 = j + $const484.120.3
+    dependency: $492build_tuple.123 = build_tuple(items=[Var(i, solver_numba_parallel.py:145), Var($binop_add486.121, solver_numba_parallel.py:167), Var($k.88, solver_numba_parallel.py:150)])
+    dependency: $494binary_subscr.124 = getitem(value=negative__array, index=$492build_tuple.123, fn=<built-in function getitem>)
+    dependency: $binop_mul498.125 = sx * $494binary_subscr.124
+    dependency: $binop_add502.126 = $binop_add472.115 + $binop_mul498.125
+    dependency: $binop_sub514.131 = i - $const512.130.3
+    dependency: $522build_tuple.134 = build_tuple(items=[Var($binop_sub514.131, solver_numba_parallel.py:168), Var(j, solver_numba_parallel.py:146), Var($k.88, solver_numba_parallel.py:150)])
+    dependency: $524binary_subscr.135 = getitem(value=negative__array, index=$522build_tuple.134, fn=<built-in function getitem>)
+    dependency: $binop_mul528.136 = sx * $524binary_subscr.135
+    dependency: $binop_add532.137 = $binop_add502.126 + $binop_mul528.136
+    dependency: $binop_add544.142 = i + $const542.141.3
+    dependency: $552build_tuple.145 = build_tuple(items=[Var($binop_add544.142, solver_numba_parallel.py:169), Var(j, solver_numba_parallel.py:146), Var($k.88, solver_numba_parallel.py:150)])
+    dependency: $554binary_subscr.146 = getitem(value=negative__array, index=$552build_tuple.145, fn=<built-in function getitem>)
+    dependency: $binop_mul558.147 = sx * $554binary_subscr.146
+    dependency: $binop_add562.148 = $binop_add532.137 + $binop_mul558.147
+    dependency: $binop_mul570.151 = sc__center * n
+    dependency: n_new = $binop_add562.148 + $binop_mul570.151
+    dependency: $binop_mul584.155 = alpha__dt * p
+    dependency: recomb = $binop_mul584.155 * n
+    dependency: $binop_sub600.160 = p_new - recomb
+    dependency: $612build_tuple.165 = build_tuple(items=[Var(i, solver_numba_parallel.py:145), Var(j, solver_numba_parallel.py:146), Var($k.88, solver_numba_parallel.py:150)])
+    dependency: $binop_sub622.168 = n_new - recomb
+    dependency: $634build_tuple.173 = build_tuple(items=[Var(i, solver_numba_parallel.py:145), Var(j, solver_numba_parallel.py:146), Var($k.88, solver_numba_parallel.py:150)])
+    dependency: $642pred = call $push_global_to_block.105(inside, func=$push_global_to_block.105, args=(Var(inside, solver_numba_parallel.py:148),), kws=(), vararg=None, varkwarg=None, target=None)
+    dependency: $668compare_op.6 = $k.88 < $binop_add664.5
+    dependency: $672pred = call $push_global_to_block.106($668compare_op.6, func=$push_global_to_block.106, args=(Var($668compare_op.6, solver_numba_parallel.py:177),), kws=(), vararg=None, varkwarg=None, target=None)
+    dependency: idx = $parfor__index_84.108
+    dependency: $binop_floordiv60.5 = $parfor__index_84.108 // n__inner
+    dependency: i = $const54.2.3 + $binop_floordiv60.5
+    dependency: $binop_mod76.10 = $parfor__index_84.108 % n__inner
+    dependency: j = $const70.7.3 + $binop_mod76.10
+    dependency: $binop_sub90.14 = i - mid__xy
+    dependency: di_sq = $binop_sub90.14 ** $const94.15.2
+    dependency: $binop_sub108.20 = j - mid__xy
+    dependency: $binop_pow114.22 = $binop_sub108.20 ** $const112.21.2
+    dependency: $binop_add118.23 = di_sq + $binop_pow114.22
+    dependency: inside = $binop_add118.23 < inner__radius__sq
+    not pure: $150call.32 = call $push_global_to_block.107($const140.28.3, $binop_sub146.31, func=$push_global_to_block.107, args=[Var($const140.28.3, solver_numba_parallel.py:150), Var($binop_sub146.31, solver_numba_parallel.py:150)], kws=(), vararg=None, varkwarg=None, target=None)
+    dependency: $158get_iter.33 = getiter(value=$150call.32)
+    dependency: $recombined.3.111 = inplace_binop(fn=<built-in function iadd>, immutable_fn=<built-in function add>, lhs=recombined.2, rhs=recomb, static_lhs=Undefined, static_rhs=Undefined)
+--------------------------------------------------------------------------------

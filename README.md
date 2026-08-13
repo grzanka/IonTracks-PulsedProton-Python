@@ -290,6 +290,9 @@ tests/
   test_grid_and_timing.py
   test_solver_numba.py
   test_solver_numba_parallel.py
+profiling/
+  Harness scripts + raw thread-sweep/flamegraph/scientific-validation data
+  for an AI-agent profiling exercise -- see profiling/README.md.
 ```
 
 ## Running on many cores (Helios / `pulsed_ion_chamber.solver_numba_parallel`)
