@@ -44,18 +44,47 @@ evidence for scheduling/fork-join overhead.
 
 ## Reproducing
 
-```bash
-module load GCCcore/13.3.0 Python/3.12.3   # every new shell, before activating the venv
-source venv/bin/activate
-pip install -e ".[profiling]"
+Run from inside an existing Slurm allocation on Helios (`salloc ...` /
+the interactive job this was developed under). `module load` must be
+repeated in every new shell before activating the venv (the venv itself
+doesn't remember which module built it), and every script below needs its
+own `srun --overlap --cpus-per-task=N --cpu-bind=none` step -- **not** a
+bare `python -m ...` -- because the interactive shell's own process is
+itself cpuset-restricted to 1 CPU regardless of how many the job holds
+(see the top-level README's "cpuset gotcha"; `os.sched_getaffinity(0)`
+would silently report 1 otherwise, and every timing below would be
+meaningless).
 
-bash profiling/run_sweep.sh                        # ~15-20 min, writes data/thread_sweep.csv
-python -m profiling.diagnostics                    # needs its own --cpus-per-task, see the script
-python -m profiling.scientific_validation
+```bash
+module load GCCcore/13.3.0 Python/3.12.3   # repeat in every new shell
+source venv/bin/activate
+pip install -e ".[profiling]"              # adds py-spy
+
+# 1) thread x threading-layer sweep (~15-20 min; loops srun internally)
+bash profiling/run_sweep.sh
+
+# 2) numba parallel_diagnostics + numactl/lscpu + affinity dump
+srun --overlap --ntasks=1 --cpus-per-task=8 --cpu-bind=none \
+  python -m profiling.diagnostics
+
+# 3) Jaffe cross-check + f(t) curves at 1 and 96 threads
+srun --overlap --ntasks=1 --cpus-per-task=96 --cpu-bind=none \
+  python -m profiling.scientific_validation
+
+# 4) py-spy flamegraphs at 1 and 96 threads (loops srun internally)
 bash profiling/pyspy_record.sh
-python -m profiling.cprofile_run --threads 1  --out-prefix profiling/data/cprofile_1threads
-python -m profiling.cprofile_run --threads 96 --out-prefix profiling/data/cprofile_96threads
+
+# 5) cProfile at 1 and 96 threads
+srun --overlap --ntasks=1 --cpus-per-task=1 --cpu-bind=none \
+  python -m profiling.cprofile_run --threads 1 --out-prefix profiling/data/cprofile_1threads
+srun --overlap --ntasks=1 --cpus-per-task=96 --cpu-bind=none \
+  python -m profiling.cprofile_run --threads 96 --out-prefix profiling/data/cprofile_96threads
 ```
+
+All of this overwrites `profiling/data/*` in place (`run_sweep.sh` even
+`rm -f`s the CSV first) -- the versions already committed are the ones
+described in this README and handed to opencode; re-running regenerates
+them (numbers will vary run-to-run, especially past ~96 threads).
 
 ## The assignment for opencode
 
