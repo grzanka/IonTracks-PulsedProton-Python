@@ -144,6 +144,41 @@ peak RSS      2.02 GiB           (1.80 GiB of carrier arrays + interpreter and t
 result        f = 0.900037,  k_s = 1.111065
 ```
 
+### Where those 768 seconds go
+
+Each phase timed separately on the same grid, `CPU/wall = 1.00` throughout —
+this is one core, not fourteen:
+
+| phase | per step | steps | total | share |
+|---|---|---|---|---|
+| Lax-Wendroff sweep | 158 ms | 2 194 | 347 s | 45 % |
+| copy-back of `_next` → current | 97 ms | 2 194 | 213 s | 28 % |
+| broadcast of the batched density | 63 ms | 1 775 | 112 s | 15 % |
+| xy rejection sampling | — | — | 60 s | 8 % |
+| track deposition (phase 1) | 16 ms | 1 775 | 28 s | 4 % |
+| **total** | | | **760 s** | vs 768 s measured |
+
+The Lax-Wendroff sweep sustains **12 GB/s** on a single core (Intel Core Ultra 5
+225U), which is where a memory-bound stencil over 1.8 GiB of arrays should land.
+Nothing here is surprising once the arithmetic is done: the run streams the
+carrier arrays several times per step, and that is the whole story.
+
+Two of those rows are avoidable overhead rather than physics:
+
+- **The copy-back is 28 % of the run and computes nothing.** It exists because
+  the sweep writes only the interior of the `_next` arrays, so the boundary ring
+  has to be carried over. Double-buffering with a pointer swap would remove it,
+  but it is not a drop-in: under `lateral_boundary="absorbing"` the ring holds
+  accumulated state that the `_next` arrays do not have, so the swap would have
+  to copy the boundary planes explicitly — `O(X² + X·Z)` instead of `O(X²·Z)`.
+- **xy sampling is 8 %**, spent in a Python-level loop calling
+  `sample_xy_inside_cylinder` once per track — 2.4 µs each, 24.6 M times.
+  Vectorising the rejection sampling over a whole batch would recover most of it.
+
+Together they are ~35 % of this run, with no effect on the physics.
+
+### Accuracy of the estimate
+
 The cost model of §1 predicted ~18 min (2 min insertion + 16 min PDE), so it was
 **40 % conservative**. The insertion term was about right; the per-step term was
 not. Extrapolating per-step cost as `no_xy²` from a 166² grid assumes a constant
