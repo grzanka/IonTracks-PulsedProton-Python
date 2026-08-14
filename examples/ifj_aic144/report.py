@@ -18,6 +18,8 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
+
 from pulsed_ion_chamber.output import write_collected_charge_csv
 from pulsed_ion_chamber.plots import save_diagnostic_plots
 from pulsed_ion_chamber.resources import format_bytes
@@ -42,6 +44,10 @@ def main(tier: str = "archive", output_dir: str = "") -> None:
     elapsed = time.perf_counter() - started
 
     csv_path = write_collected_charge_csv(result, directory / "collected_charge.csv")
+    # Saved so the figures can be redrawn later without repeating the run --
+    # everything else a plot needs is in the CSV, but this map is not.
+    density_path = directory / "track_density_xy.npy"
+    np.save(density_path, result.track_density_xy)
     plot_paths = save_diagnostic_plots(result, directory, title=f"Markus 2 mm, {tier}")
 
     radius_um = config.sampled_radius_cm * 1e4
@@ -57,6 +63,7 @@ def main(tier: str = "archive", output_dir: str = "") -> None:
     print(f"k_s = 1/f            : {result.ks:.6f}")
     print(f"k_s, edge-corrected  : {corrected:.6f}  (+{EDGE_DEFICIT_UM / radius_um:.4f})")
     print(f"\nWrote {csv_path}")
+    print(f"Wrote {density_path}")
     for path in plot_paths:
         print(f"Wrote {path}")
 

@@ -98,22 +98,27 @@ def save_diagnostic_plots(result, directory: Union[str, Path], title: str = "") 
     div, prefix = _scale(density.ravel())
     half_um = 0.5 * config.no_xy * config.unit_length_cm * 1e4
     extent = (-half_um, half_um, -half_um, half_um)
-    fig, ax = plt.subplots(figsize=(5.6, 5))
+    fig, ax = plt.subplots(figsize=(6.4, 5.2), layout="constrained")
     image = ax.imshow(density.T / div, origin="lower", extent=extent, cmap="magma")
     circles = [(config.inner_radius, ":", "scored radius")]
     if config.chamber_fill_fraction != 1.0:
         # Otherwise the two circles coincide and the legend implies a
         # distinction the run does not have.
         circles.insert(0, (config.sampling_radius, "-", "sampling radius"))
+    from matplotlib.lines import Line2D
+
+    handles = []
     for radius_voxels, style, label in circles:
         radius_um = radius_voxels * config.unit_length_cm * 1e4
-        ax.add_patch(plt.Circle((0, 0), radius_um, fill=False, ls=style, lw=1.4, color="cyan", label=label))
+        ax.add_patch(plt.Circle((0, 0), radius_um, fill=False, ls=style, lw=1.4, color="cyan"))
+        # Proxy handles: a Circle patch would render in the legend as a filled
+        # box, which says nothing about which line style is which.
+        handles.append(Line2D([], [], color="cyan", ls=style, lw=1.4, label=label))
     ax.set_xlabel("x [µm]")
     ax.set_ylabel("y [µm]")
-    ax.set_title(f"Track areal density{suffix}")
-    ax.legend(frameon=False, loc="upper right", fontsize=8, labelcolor="white")
+    ax.set_title(f"Track areal density{suffix}", fontsize=11)
+    ax.legend(handles=handles, frameon=False, loc="upper right", fontsize=8, labelcolor="white")
     fig.colorbar(image, ax=ax, label=f"tracks [{prefix}cm⁻²]")
-    fig.tight_layout()
     path = directory / "track_density_cross_section.png"
     fig.savefig(path, dpi=150)
     plt.close(fig)
