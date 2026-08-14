@@ -7,8 +7,9 @@ algorithm [ALGORITHM.md](ALGORITHM.md), for the general cost model
 
 **The one-line answer:** for the shortest wall time on one run, ask for
 **~96 cores** (full electrode: 680 s → 77 s). For the most science per
-core-hour, ask for **8–24** and spend the rest of the node on independent
-replicas. Never ask for all 190 — it is consistently slower than 96.
+core-hour, ask for **8 or 16** and spend the rest of the node on independent
+replicas (16 and 24 measure the same — one NUMA domain saturates at ~16 cores).
+Never ask for all 190: it is consistently slower than 96.
 
 ---
 
@@ -62,8 +63,7 @@ srun --overlap --ntasks=1 --cpus-per-task=24 --cpu-bind=none \
 
 **Do not set `OMP_PROC_BIND` / `OMP_PLACES`.** Measured on the full-electrode
 grid at 96 threads: default placement 70 s, `OMP_PROC_BIND=spread
-OMP_PLACES=cores` **593 s**
-— 8.5× worse. Under `--cpu-bind=none` the OpenMP place list does not describe
+OMP_PLACES=cores` **593 s** — 8.5× worse. Under `--cpu-bind=none` the OpenMP place list does not describe
 the CPUs the step actually holds, and the runtime stacks threads onto a handful
 of cores. Leave placement to Slurm and the kernel.
 
@@ -103,9 +103,8 @@ asking for all 190 cores is the right call for one run.
 
 **Per-core efficiency is best at the low end.** 8 threads gets 33 % of ideal;
 96 gets 9 %. So a node running **8 concurrent 24-thread jobs** does far more
-science per hour than one 190-thread job: 8 × 3.9 = 31× aggregate against 5.5×.
-Twelve 16-thread jobs are better still: 12 × 3.7 = 44×.
-For anything that is a parameter study — seeds, dose rates, voltages — that is
+science per hour than one 190-thread job: 8 × 3.9 = 31× aggregate against 5.5×,
+and twelve 16-thread jobs better still at 12 × 3.7 = 44×. For anything that is a parameter study — seeds, dose rates, voltages — that is
 the configuration to use, as a Slurm job array.
 
 **The curve is noisy above ~24 threads.** Repeat measurements at 96 came out
