@@ -182,12 +182,20 @@ measured 6.3×, essentially at it). Same division of blame as Helios.
 | | laptop¹ | Ares | Helios |
 |---|---|---|---|
 | cores | 12 (2P + 8E + 2LP-E) | 48 | 192 |
-| single core, 10 Gy/s | (pending) | **968 s** | **572 s** |
-| best wall time, 10 Gy/s | (pending) | **105 s** | **47 s** |
-| cores at that point | (pending) | 24 | 32 |
-| best speed-up | (pending) | 9.19× | 12.23× |
-| efficiency there | (pending) | 38 % | 38 % |
-| node throughput, 8-thread jobs | (pending) | 6 × 5.76 = **35×** | 24 × 6.32 = **152×** |
+| single core, 10 Gy/s | **562 s** | **968 s** | **572 s** |
+| best wall time, 10 Gy/s | 373 s (2 thr)² | **105 s** | **47 s** |
+| cores at that point | 2 | 24 | 32 |
+| best speed-up | 1.51× | 9.19× | 12.23× |
+| efficiency there | 75 % | 38 % | 38 % |
+| node throughput, 8-thread jobs | n/a | 6 × 5.76 = **35×** | 24 × 6.32 = **152×** |
+
+² the laptop ladder past 2 threads was still running when this was written; 2
+threads is where its curve had already flattened.
+
+**The single-core row is the one to look at.** A 2024 laptop P-core (562 s) is
+marginally *faster* than a Helios core (572 s) and 1.7× faster than an Ares core
+(968 s). Compute nodes do not sell fast cores; they sell many of them, and this
+kernel can use ~12× of Helios's 192.
 
 ¹ `./bench_laptop.sh`, see [BENCHMARKS-LAPTOP.md](BENCHMARKS-LAPTOP.md).
 

@@ -17,6 +17,7 @@ which numbers in the repository came from here.
 | hardware threads | 14 |
 | memory bandwidth | ~29 GB/s practical ceiling; **~21 GB/s reachable from a single core** |
 | sweep bandwidth achieved | 12 GB/s on one core over 1.8 GiB of arrays |
+| P-core clock sustained | 4783–4793 MHz on one core, 4202 on two, 3412 on eight |
 
 The second row of numbers is the one that matters, and it is what makes this
 machine behave so differently from a compute node. **One core here can already
@@ -85,11 +86,27 @@ arithmetic is done: the run streams the carrier arrays several times per step,
 and that is the whole story.
 
 **This table is the "before" picture.** Two of its rows were avoidable overhead
-rather than physics, and both have since been removed (HELIOS.md §6): the
+rather than physics, and both have since been removed (HELIOS.md §7): the
 copy-back became a buffer swap, and the per-track xy sampling became a blocked,
-bit-identical batch draw. Together they were ~35 % of this run. The laptop has
-not been re-measured since; expect roughly 500 s rather than 768 s, and treat
-that as an estimate until someone re-runs it.
+bit-identical batch draw.
+
+**Re-measured after those fixes: 562.1 s on one P-core** (`./bench_laptop.sh
+--stage scaling`), against 768 s before — a 27 % cut, and close to the ~500 s
+that was estimated here while it was still a guess. `k_s = 1.111065`, matching
+Helios and Ares exactly.
+
+### The laptop core is the fastest of the three machines
+
+| | single core, full electrode, 10 Gy/s |
+|---|---|
+| **laptop** (Core Ultra 5 225U, 1 P-core) | **562 s** |
+| Helios (EPYC 9654) | 572 s |
+| Ares (Xeon Platinum 8268) | 968 s |
+
+A 2024 laptop P-core edges out a Helios core and beats an Ares core by 1.7× on
+this kernel. Nothing about a compute node makes a *core* fast; what a node sells
+is width, and this code can only use ~12× of Helios's 192. See
+[BENCHMARKS-ARES.md](BENCHMARKS-ARES.md) §6 for why the Xeon loses.
 
 ### Accuracy of the estimate
 
@@ -121,21 +138,70 @@ only becomes necessary alongside edge physics the model does not currently
 have — guard-ring field distortion, non-uniform fluence — at which point the
 answer would no longer be a scaled copy of the interior.
 
-## 4. Threads on a laptop: use one
+## 4. Threads on a laptop: two, and only two
 
-`num_threads=2` buys about 1.7× on the sweep and it gets *worse* beyond that.
-That is not a defect in the parallelisation; it is §1. A single core already
-reaches ~21 of the machine's ~29 GB/s, so the second thread is competing for
-~40 % more bandwidth than exists, and every thread after it adds fork/join cost
-against a resource that is already saturated.
+Measured, `./bench_laptop.sh --stage scaling`, full electrode, 10 Gy/s, pinned
+one thread per physical core:
 
-The contrast with Helios is the whole point of having two pages: there, one core
-gets ~1 % of the node's bandwidth, and the same code scales 12.2× on 32 cores
-(HELIOS.md §4). Run `./bench_laptop.sh` to put this machine's own 1/2/4/8-thread
-ladder beside it — see [`../profiling/laptop_scaling/README.md`](../profiling/laptop_scaling/README.md).
-**Whether threads help is a property of the machine, not of the code.**
+| threads | cores | wall | speed-up | eff. | sustained clock |
+|---|---|---|---|---|---|
+| 1 | 1P | 562 s | 1.00× | 100 % | 4793 MHz |
+| 2 | 2P | 373 s | 1.51× | 75 % | 4202 MHz |
 
-For parameter studies on a laptop, run independent single-threaded processes —
-as many as you have physical cores, memory permitting. Each one is bandwidth
-starved in the same way, so expect well under linear aggregate throughput here
-too.
+**And part of even that 1.51× is not scaling at all — it is thermal.** The clock
+falls 12 % between the two runs, and at 8 threads (2P + 6E) it is down to
+3412 MHz, 29 % below single-core. On a laptop the second thread is competing for
+bandwidth *and* for a package power budget the first thread was already using.
+That is why every run here records the clock it sustained; a laptop speed-up
+figure without one is not interpretable.
+
+Contrast with Helios, where 2 threads returns 1.91× at 96 % efficiency and the
+clock does not move. **Whether threads help is a property of the machine**, and
+on this one the answer is "barely".
+
+## 5. P-cores versus E-cores
+
+`./bench_laptop.sh --stage cores`, on a 186² × 210 grid (222 MiB — DRAM-resident
+on this machine, unlike every named tier below `full_electrode`), 50 Gy/s:
+
+| threads | perf ladder | | econ ladder | | P advantage |
+|---|---|---|---|---|---|
+| | cores | wall | cores | wall | |
+| 1 | 1P | **79.6 s** | 1E | **122.0 s** | **1.53×** |
+| 2 | 2P | 52.3 s | 2E | 73.2 s | 1.40× |
+| 4 | 2P + 2E | 53.4 s | 4E | 68.6 s | 1.28× |
+
+`k_s = 1.442382` in all six runs.
+
+**A P-core beats an E-core by more than its clock does.** The clock ratio is
+4783/3785 = 1.26×; the measured single-thread ratio is **1.53×**. The surplus is
+memory-level parallelism: a bandwidth-bound stencil lives on how many cache
+misses a core can keep in flight, and the P-core's deeper out-of-order window
+sustains more of them. Clock is the smaller half of the story.
+
+**The advantage shrinks as threads are added** — 1.53× → 1.40× → 1.28×,
+converging toward the clock ratio. That is the memory controller becoming the
+limit instead of the core: once bandwidth is the binding constraint, it stops
+mattering which kind of core is waiting for it.
+
+**Adding E-cores to a saturated pair of P-cores buys nothing.** 2P is 52.3 s and
+2P + 2E is 53.4 s — slightly *worse*. Meanwhile 4E (68.6 s) does beat 2E
+(73.2 s), because four small cores are still short of the bandwidth two big ones
+already claim. The practical rule on this machine: **two P-cores is the whole
+budget**, and anything past it is contention.
+
+## 6. Running it yourself
+
+```bash
+./bench_laptop.sh --stage topology   # instant, verifies core detection
+./bench_laptop.sh --stage cores      # ~10 min
+./bench_laptop.sh --stage scaling    # ~70 min
+python profiling/cluster_scaling/collect.py profiling/data/laptop_scaling/perf
+```
+
+Plug in, use a performance profile, close everything else. See
+[`profiling/laptop_scaling/README.md`](../profiling/laptop_scaling/README.md).
+
+For parameter studies, run independent single-threaded processes — but expect
+well under linear aggregate throughput, for the same bandwidth and power reasons
+as above.
