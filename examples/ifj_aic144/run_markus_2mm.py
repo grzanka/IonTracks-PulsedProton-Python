@@ -14,8 +14,9 @@ Run:  python examples/ifj_aic144/run_markus_2mm.py [tier] [--threads N] [--json 
 The default is one thread and the unbatched backend, which is what the tier
 table below was measured with. `--threads N` switches to the batched backend
 (`solver_numba_parallel`) and is how the `full_electrode` tier becomes
-affordable: 776 s on one core, 31 s on 190. On a cluster that needs its own
-srun step -- see docs/HELIOS.md.
+affordable on a cluster -- roughly 10x on ~96 cores. There it needs its own
+srun step, and the thread count that pays is not the largest one available:
+see docs/HELIOS.md.
 """
 
 import argparse
@@ -115,13 +116,23 @@ def build_config(tier: str = DEFAULT_TIER) -> SimulationConfig:
     )
 
 
-def main(tier: str = DEFAULT_TIER, threads: int = 1, json_path: str | None = None) -> None:
+def main(
+    tier: str = DEFAULT_TIER,
+    threads: int = 1,
+    json_path: str | None = None,
+    backend: str = "auto",
+) -> None:
     config = build_config(tier)
-    # One thread keeps the unbatched backend, so the default run is the one the
-    # tier table was measured with. Anything else needs the batched one: its
-    # kernels are the parallel ones, and it is the only backend where a thread
-    # count means anything.
-    batched = threads != 1
+    # "auto": one thread keeps the unbatched backend, so a plain run reproduces
+    # the tier table; more than one needs the batched backend, the only one
+    # where a thread count means anything.
+    #
+    # The override matters for one real case: a single-core *baseline* for a
+    # large tier. `full_electrode` on the unbatched backend would deposit
+    # m * w^2 * no_z per step and take hours, so the 680 s reference figure is
+    # the batched backend at `--threads 1`, not the unbatched one. Comparing
+    # thread counts means holding the backend fixed.
+    batched = threads != 1 if backend == "auto" else backend == "batched"
     print(f"=== IFJ AIC-144, Markus 2 mm, macropulse, 10 Gy/s -- '{tier}' grid ===")
     print(config.summary())
     backend = "solver_numba_parallel" if batched else "solver_numba"
@@ -187,5 +198,11 @@ if __name__ == "__main__":
         help="thread count for the batched backend; 1 (default) uses the unbatched one",
     )
     parser.add_argument("--json", default=None, help="also write the result as JSON")
+    parser.add_argument(
+        "--backend",
+        default="auto",
+        choices=("auto", "serial", "batched"),
+        help="auto (default) picks by thread count; force 'batched' for a single-core baseline",
+    )
     args = parser.parse_args()
-    main(args.tier, args.threads, args.json)
+    main(args.tier, args.threads, args.json, args.backend)

@@ -1,4 +1,14 @@
-# Phase 1: raw profiling & scientific-validation data
+# Profiling harness and raw data
+
+> **Phase 2 happened.** The thread sweep below was run on a 40 MiB grid, and
+> concluded that threads never help. That is true for *that* grid and false in
+> general: on a grid larger than the node's 768 MiB of L3 the same code scales
+> ~10x, once NUMA first touch, a serial copy-back and a per-track Python loop
+> are dealt with. See [`docs/HELIOS.md`](../docs/HELIOS.md), and
+> `bench_kernels.py` / `run_full_electrode_sweep.sh` below for the harness that
+> showed it. The Phase-1 material is kept as-is; it is the "before".
+
+## Phase 1: raw profiling & scientific-validation data
 
 This directory is training material: a set of scripts and the raw
 performance/correctness data they produced on a Cyfronet Helios node
@@ -33,6 +43,8 @@ prose that's already sitting in the repo.
 | `diagnostics.py` | Numba's resolved threading layer, CPU affinity, SLURM job sizing, `numactl --hardware`/`lscpu` output, and `parallel_diagnostics(level=4)` for both hot `prange` kernels -> `data/diagnostics.txt`. (Needs `.recompile()` first: a `cache=True` dispatcher loaded from its on-disk cache doesn't retain the parfor metadata `parallel_diagnostics` needs.) |
 | `cprofile_run.py` | cProfile of one run at a given thread count -> `data/cprofile_{N}threads.{pstats,txt}`. The two hot kernels are opaque compiled calls to cProfile, so this shows Python-level driver overhead (schedule building, the per-time-step loop, dispatch cost) rather than time inside the kernels themselves. |
 | `pyspy_record.sh` | py-spy flamegraphs (`--native`, so OpenMP/Numba worker threads show up, not just the Python driver) at 1 and 96 threads -> `data/flamegraph_{N}threads.svg`. Sampling rate is scaled down at high thread count (200 Hz -> 20 Hz) because native stack-walking across many OS threads is itself expensive enough to perturb the run at full rate (measured: 200 Hz/96 threads inflated wall time from ~36 s to 102 s, with py-spy logging "behind in sampling" throughout). **Treat the flamegraphs as a qualitative call-stack picture only** — `thread_sweep.csv` is the timing evidence. |
+| `bench_kernels.py` | **Phase 2.** Per-phase timing of one time step (sweep, copy-back, broadcast, boundary) on a chosen grid tier and thread count, each reported as GB/s of the DRAM traffic it must move. `--init serial\|parallel\|both` compares main-thread NUMA first touch against per-thread first touch, which is the single largest effect on this hardware. -> `data/bench_kernels_full_electrode.json` |
+| `run_full_electrode_sweep.sh` | **Phase 2.** Whole-run thread scaling on the `full_electrode` tier, one `srun` step per thread count. Whole runs rather than kernels, because what limits the run now is the phases that were never threaded. -> `data/full_electrode_sweep/threads_N.json` |
 | `scientific_validation.py` | Jaffe-theory single-track cross-check and the converged-grid `f(t)` curve, both at 1 and 96 threads -> `data/jaffe_validation.json`, `data/f_t_curve_{N}threads.csv`, `data/converged_grid_summary.json`. Confirms results are thread-count-invariant (to float non-associativity, ~1e-15) before any performance conclusion is trusted. |
 
 `perf` and (initially) `py-spy` are not installed system-wide on this

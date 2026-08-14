@@ -6,9 +6,12 @@ Three things both backends need, kept here so they cannot drift apart:
 * :class:`Diagnostics` -- the per-time-step record, accumulated as the run
   proceeds.
 * :func:`apply_lateral_boundary` -- the once-per-step boundary update.
+* :func:`carry_lateral_ring` -- the boundary planes a buffer swap has to carry.
 
-None of it is on the hot path (the boundary update touches four planes out of
+None of it is on the hot path (the boundary functions touch four planes out of
 a whole grid), so it is plain NumPy and plain Python: readable beats fast here.
+That is a measured claim, not an assumption -- a threaded version of the
+boundary update ran 5x *slower*; see :func:`apply_lateral_boundary`.
 """
 
 from dataclasses import dataclass

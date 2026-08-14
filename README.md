@@ -72,7 +72,7 @@ Two results worth knowing before trusting a number:
 - **Whether threads help depends on whether the grid fits in cache.** Both hot
   loops are memory-bandwidth-bound. A small grid is already saturated on one
   core and gets slower with more; a grid larger than the machine's L3 scales
-  well — the full electrode is 776 s on one Helios core and 70 s on 96, same
+  well — the full electrode is 680 s on one Helios core and 77 s on 96, same
   `k_s` to six digits. `docs/PERFORMANCE.md` §6, `docs/HELIOS.md`.
 
 ## Provenance and scope

@@ -53,8 +53,8 @@ uniform and normal to the electrodes.
 | `wide` | 0.018 (180 µm) | 42²×210 | 113 638 | 14.5 s | 1.1035 | 1.1119 |
 | `full_electrode` | 0.265 (2.65 mm) | 536²×210 | 24 630 400 | 12.8 min¹ | 1.1111 | 1.1117 |
 
-¹ single core. The same run takes ~70 s on 96 Helios cores, with `k_s`
-identical to six digits — see [`docs/HELIOS.md`](../../docs/HELIOS.md).
+¹ single core on a laptop; 680 s on one Helios core. The same run takes 77 s
+on 96 Helios cores, with `k_s` identical to six digits — see [`docs/HELIOS.md`](../../docs/HELIOS.md).
 
 **No tier is converged in column radius.** A track at the rim of the sampled
 disc has neighbours on one side only, so `k_s` is biased low by a

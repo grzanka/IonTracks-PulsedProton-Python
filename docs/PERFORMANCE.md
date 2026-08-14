@@ -224,7 +224,7 @@ there are thousands of them, so fork/join and cross-NUMA barrier cost dominates.
 
 **Large grids: threads are the whole point.** The full-electrode grid is 1.9 GiB
 — DRAM-resident, and one core can pull only ~9 GB/s of a ~900 GB/s node. The
-same run is 776 s on one core and 70 s on 96, with `k_s` identical to six
+same run is 680 s on one core and 77 s on 96, with `k_s` identical to six
 digits. Getting there needed three fixes that only matter above a few hundred
 MiB — NUMA first touch, deleting the serial copy-back, and taking per-track
 sampling out of the Python interpreter. **[docs/HELIOS.md](HELIOS.md) has the

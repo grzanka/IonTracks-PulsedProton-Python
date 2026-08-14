@@ -5,9 +5,10 @@ what wall time to expect. For the physics see [PHYSICS.md](PHYSICS.md), for the
 algorithm [ALGORITHM.md](ALGORITHM.md), for the general cost model
 [PERFORMANCE.md](PERFORMANCE.md).
 
-**The one-line answer:** ask for **8–24 cores in one NUMA domain**, use
-`--threads` equal to what you asked for, and spend anything beyond that on
-independent replicas rather than on more threads for one run.
+**The one-line answer:** for the shortest wall time on one run, ask for
+**~96 cores** (full electrode: 680 s → 77 s). For the most science per
+core-hour, ask for **8–24** and spend the rest of the node on independent
+replicas. Never ask for all 190 — it is consistently slower than 96.
 
 ---
 
@@ -60,7 +61,8 @@ srun --overlap --ntasks=1 --cpus-per-task=24 --cpu-bind=none \
 `--cpu-bind=none` stops Slurm from pinning the whole step onto one core.
 
 **Do not set `OMP_PROC_BIND` / `OMP_PLACES`.** Measured on the full-electrode
-grid: default placement 70 s, `OMP_PROC_BIND=spread OMP_PLACES=cores` **593 s**
+grid at 96 threads: default placement 70 s, `OMP_PROC_BIND=spread
+OMP_PLACES=cores` **593 s**
 — 8.5× worse. Under `--cpu-bind=none` the OpenMP place list does not describe
 the CPUs the step actually holds, and the runtime stacks threads onto a handful
 of cores. Leave placement to Slurm and the kernel.
@@ -70,33 +72,49 @@ of cores. Leave placement to Slurm and the kernel.
 Measured, AIC-144 Markus 2 mm `full_electrode` tier (536² × 210 voxels,
 1.9 GiB of carrier arrays, 24.6 M tracks, 2194 steps), one whole run each:
 
-| threads | wall | speed-up | ms/step | k_s |
-|---|---|---|---|---|
-| 1 | see §5 | 1× | | 1.111065 |
-| 8 | | | | 1.111065 |
-| 16 | | | | 1.111065 |
-| 24 | | | | 1.111065 |
-| 48 | 113 s | | 51 | 1.111065 |
-| 96 | **70 s** | | 32 | 1.111065 |
-| 190 | 124 s | | 56 | 1.111065 |
+| threads | wall | speed-up | per-core efficiency | ms/step | k_s |
+|---|---|---|---|---|---|
+| 1 | 680 s | 1× | 100 % | 310 | 1.111065 |
+| 8 | 258 s | 2.6× | 33 % | 118 | 1.111065 |
+| 24 | 175 s | 3.9× | 16 % | 80 | 1.111065 |
+| 48 | 97 s | 7.0× | 15 % | 44 | 1.111065 |
+| 96 | **77 s** | **8.9×** | 9 % | 35 | 1.111065 |
+| 190 | 124 s | 5.5× | 3 % | 56 | 1.111065 |
 
 `k_s` is identical to six digits at every thread count — the thread count
-changes the order of a float reduction and nothing else.
+changes the order of one float reduction and nothing else. That is the check
+that makes the rest of the table worth reading.
 
-Two things are worth reading off that table. The **best single-run point is
-around one NUMA domain**, and past ~96 threads it gets worse, not better:
-threads spread across both sockets, the kernels' static `prange` chunks stop
-matching where the pages live, and run-to-run variance grows to tens of percent.
-And the **curve is not monotonic** — 48 threads measured slower than 96 more
-than once. Treat any single measurement above ~24 threads as ±30 %.
+Three things to read off it.
 
-So: **8–24 threads per run.** Beyond that, use the cores for replicas — a Slurm
-job array of single-domain jobs over seeds, dose rates or voltages gets close to
-linear aggregate throughput, which more threads on one run does not.
+**Shortest wall time is ~96 threads, and 190 is worse than 96.** Past one socket
+the threads span both, the kernels' static `prange` chunks stop matching where
+the pages live, and the run slows down. There is no configuration in which
+asking for all 190 cores is the right call for one run.
+
+**Per-core efficiency is best at the low end.** 8 threads gets 33 % of ideal;
+96 gets 9 %. So a node running **8 concurrent 24-thread jobs** does far more
+science per hour than one 190-thread job: 8 × 3.9 = 31× aggregate against 5.5×.
+For anything that is a parameter study — seeds, dose rates, voltages — that is
+the configuration to use, as a Slurm job array.
+
+**The curve is noisy above ~24 threads.** Repeat measurements at 96 came out
+between 70 s and 93 s, and one 48-thread run measured slower than 96 while
+another measured faster. Treat any single number above 24 threads as ±30 %, and
+do not tune against differences smaller than that.
 
 ## 5. What one core costs
 
-*(filled in below by the single-core reference run)*
+680 s for the full electrode, and **2.0 s for the `archive` tier**. The same
+`archive` run takes 1.8 s on a 2024 laptop (Intel Core Ultra 5 225U), so a
+Helios core is about **10 % slower than a laptop core** on this workload. That is
+the expected shape: an EPYC 9654 core runs at a lower clock and gets ~9 GB/s of
+memory bandwidth, roughly 1 % of its node's ~900 GB/s, where a laptop core gets
+most of its machine's ~29 GB/s.
+
+The consequence worth internalising: **Helios is not a faster computer, it is a
+wider one.** Nothing here gets quicker by being moved to Helios unless it is
+either given many cores on a grid large enough to use them, or replicated.
 
 ## 6. Why threads help here but not on a laptop
 
