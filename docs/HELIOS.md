@@ -76,6 +76,7 @@ Measured, AIC-144 Markus 2 mm `full_electrode` tier (536² × 210 voxels,
 |---|---|---|---|---|---|
 | 1 | 680 s | 1× | 100 % | 310 | 1.111065 |
 | 8 | 258 s | 2.6× | 33 % | 118 | 1.111065 |
+| 16 | 183 s | 3.7× | 23 % | 84 | 1.111065 |
 | 24 | 175 s | 3.9× | 16 % | 80 | 1.111065 |
 | 48 | 97 s | 7.0× | 15 % | 44 | 1.111065 |
 | 96 | **77 s** | **8.9×** | 9 % | 35 | 1.111065 |
@@ -85,7 +86,15 @@ Measured, AIC-144 Markus 2 mm `full_electrode` tier (536² × 210 voxels,
 changes the order of one float reduction and nothing else. That is the check
 that makes the rest of the table worth reading.
 
-Three things to read off it.
+Four things to read off it.
+
+**The steps in the curve are the memory hierarchy, not the core count.** 8
+threads is one CCD and its 32 MiB L3 slice; 16 and 24 both sit inside one NUMA
+domain and measure the *same* (183 s vs 175 s, inside the noise) because they
+share the same three memory channels and 16 cores already saturate them; 48 and
+96 add domains, and therefore controllers, and therefore bandwidth. Worth
+planning around: **going from 16 to 24 cores buys nothing**, so the sizes worth
+asking for are 8, 16, or a multiple of 24.
 
 **Shortest wall time is ~96 threads, and 190 is worse than 96.** Past one socket
 the threads span both, the kernels' static `prange` chunks stop matching where
@@ -95,6 +104,7 @@ asking for all 190 cores is the right call for one run.
 **Per-core efficiency is best at the low end.** 8 threads gets 33 % of ideal;
 96 gets 9 %. So a node running **8 concurrent 24-thread jobs** does far more
 science per hour than one 190-thread job: 8 × 3.9 = 31× aggregate against 5.5×.
+Twelve 16-thread jobs are better still: 12 × 3.7 = 44×.
 For anything that is a parameter study — seeds, dose rates, voltages — that is
 the configuration to use, as a Slurm job array.
 
