@@ -66,25 +66,27 @@ fail() { echo "ERROR: $*" >&2; exit 1; }
 
 command -v sbatch >/dev/null || fail "sbatch not found -- is this a Slurm login node?"
 
+# Resolve the site before the venv check, so the advice below names *this*
+# machine's module rather than the other machine's.
+# shellcheck source=profiling/cluster_scaling/sites.sh
+source "${REPO}/profiling/cluster_scaling/sites.sh"
+resolved_site="${SITE:-$(site_detect)}"
+site_configure "$resolved_site" || fail "unknown site '${resolved_site}'.
+Pass --site helios|ares, or add a branch to profiling/cluster_scaling/sites.sh."
+
 [ -d "${REPO}/venv" ] || fail "no venv at ${REPO}/venv -- create it first:
-    module load GCCcore/13.3.0 Python/3.12.3
-    python -m venv venv && source venv/bin/activate && pip install -e '.[dev]'"
+    module load ${SITE_MODULES}
+    python -m venv venv && source venv/bin/activate && pip install -e '.[dev]'
+
+(that module line is the one for ${SITE_NAME}; \`module spider python\` lists
+the alternatives if it has moved)"
 
 [ -f "${REPO}/examples/ifj_aic144/run_markus_2mm.py" ] || fail "run from the repository root"
 
 if [ "$DRY_RUN" = "1" ]; then
-  # Resolve the site config rather than printing "site default": the point of a
-  # dry run is to see the account, partition and ladder that would actually be
-  # used, on a machine where getting one of them wrong wastes a queue slot.
-  # shellcheck source=profiling/cluster_scaling/sites.sh
-  source "${REPO}/profiling/cluster_scaling/sites.sh"
-  resolved_site="${SITE:-$(site_detect)}"
-  if ! site_configure "$resolved_site"; then
-    echo "dry run -- unknown site '${resolved_site}'." >&2
-    echo "Pass --site helios|ares, or add a branch to" >&2
-    echo "profiling/cluster_scaling/sites.sh." >&2
-    exit 2
-  fi
+  # The site is already resolved by the preflight above, so this just reports
+  # what would be used -- the point of a dry run being to catch a wrong account
+  # or ladder before it costs a queue slot.
   echo "dry run -- nothing will be submitted"
   echo "site      : ${SITE_NAME} (${resolved_site}), ${SITE_CORES_PER_NODE} cores/node"
   echo "modules   : ${SITE_MODULES:-none}"

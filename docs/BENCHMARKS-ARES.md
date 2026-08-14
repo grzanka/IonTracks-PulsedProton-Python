@@ -1,8 +1,8 @@
 # Benchmarks: Ares (Cyfronet)
 
 > **Placeholder.** The hardware description and the setup instructions below are
-> real; **every results table is empty and marked TODO**, because the study has
-> not been run here yet. Run `./submit.sh` on an Ares access node and fill them
+> real and verified on the machine; **every results table is empty and marked
+> TODO**, because the study has not been run here yet. Run `./submit.sh` on an Ares access node and fill them
 > in from `python profiling/cluster_scaling/collect.py profiling/data/ares_scaling`.
 >
 > The predictions in §5 were written *before* any measurement. Leave them as
@@ -60,18 +60,22 @@ domain, 24 one socket, 48 the node. Those are where the curve should bend.
 ```bash
 # on an Ares access node
 git clone <repo> && cd IonTracks-PulsedProton-Python
-module spider python                  # find the right module -- see the warning below
-module load <the module you found>
+module load python/3.12.3-gcccore-13.3.0
 python -m venv venv && source venv/bin/activate
 pip install -e ".[dev]"
-pytest                                # ~10 s, 65 tests
+pytest                                       # ~10 s, 65 tests
 ```
 
-> **`SITE_MODULES` for Ares in `profiling/cluster_scaling/sites.sh` is a guess.**
-> Ares has a different module tree from Helios. Check with `module spider
-> python` and correct that line before submitting; the job script fails loudly
-> if the module does not load rather than silently falling through to a system
-> python without numba.
+**The module name differs from Helios's, the software does not.** Ares spells it
+`python/3.12.3-gcccore-13.3.0` — lower case, toolchain folded into one name —
+where Helios wants `GCCcore/13.3.0 Python/3.12.3`. Both resolve to the same
+Python 3.12.3, and the venv then pulls the same numba 0.67.0 and numpy 2.5.2.
+That is a piece of luck worth stating: an Ares-vs-Helios comparison is a
+hardware comparison, with no compiler or library version confounding it.
+
+`sites.sh` knows both spellings, so `./submit.sh` needs no argument. If a module
+is ever renamed, the job script aborts with the failing `module load` rather
+than falling through to a system python without numba.
 
 ## 3. Running the study
 

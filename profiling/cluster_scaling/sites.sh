@@ -68,11 +68,14 @@ site_configure() {
       # the domain, socket and node boundaries, and they are where the curve
       # should bend.
       #
-      # TODO: SITE_MODULES is a guess -- Ares has a different module tree from
-      # Helios. Check with `module spider python` on an Ares login node and fix
-      # this line; the job script fails loudly rather than silently running the
-      # system python if the modules do not load.
-      SITE_MODULES="${SITE_MODULES_OVERRIDE:-python/3.10.4-gcccore-11.3.0}"
+      # Same Python and GCCcore as Helios, but Ares names its modules in lower
+      # case and rolls the toolchain into one name rather than two. Confirmed by
+      # `module spider python` on an Ares login node.
+      #
+      # Worth having landed on the same toolchain: both clusters end up with
+      # Python 3.12.3, numba 0.67.0 and numpy 2.5.2, so a Helios-vs-Ares
+      # comparison is a hardware comparison and not a software one.
+      SITE_MODULES="${SITE_MODULES_OVERRIDE:-python/3.12.3-gcccore-13.3.0}"
       SITE_ACCOUNT="${ACCOUNT:-plgccbmc15-cpu}"
       SITE_PARTITION="${PARTITION:-plgrid}"
       SITE_THREADS="${THREAD_COUNTS:-1 2 4 8 12 24 48}"
