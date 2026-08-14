@@ -185,3 +185,58 @@ def test_backends_agree_on_the_ported_physics(extra):
     assert parallel_result.ks == pytest.approx(reference.ks, rel=1e-9)
     np.testing.assert_allclose(numba_result.f_t, reference.f_t, rtol=1e-9)
     np.testing.assert_allclose(parallel_result.f_t, reference.f_t, rtol=1e-9)
+
+
+# --- deposition stencil -----------------------------------------------------
+
+
+def test_cutoff_geometry_and_discarded_charge():
+    config = SimulationConfig(**SMALL, track_cutoff_sigmas=10.0)
+    # sigma = b / sqrt(2) for exp(-r^2/b^2)
+    assert config.track_sigma_cm == pytest.approx(config.track_radius_cm / np.sqrt(2.0))
+    assert config.track_cutoff_cm == pytest.approx(10.0 * config.track_sigma_cm)
+    assert config.track_cutoff_voxels == pytest.approx(config.track_cutoff_cm / config.unit_length_cm)
+    # discarded fraction of a 2D Gaussian beyond radius R is exp(-R^2/b^2)
+    assert config.truncated_charge_fraction == pytest.approx(np.exp(-50.0))
+
+
+def test_no_cutoff_spans_the_whole_grid():
+    config = SimulationConfig(**SMALL, track_cutoff_sigmas=None)
+    assert config.truncated_charge_fraction == 0.0
+    # no grid point can be further than no_xy voxels from any track position
+    assert config.track_cutoff_voxels >= config.no_xy
+
+
+def test_non_positive_cutoff_rejected():
+    with pytest.raises(ValueError, match="track_cutoff_sigmas"):
+        SimulationConfig(**SMALL, track_cutoff_sigmas=0.0)
+
+
+def test_default_cutoff_is_exact_to_machine_precision():
+    """10 sigma discards 1.9e-22 of each track, far below float64 epsilon, so
+    it must not move k_s at all relative to depositing over the whole grid."""
+    full = run_simulation_numba(SimulationConfig(**SMALL, track_cutoff_sigmas=None), progress=False)
+    stencil = run_simulation_numba(SimulationConfig(**SMALL, track_cutoff_sigmas=10.0), progress=False)
+    assert stencil.ks == pytest.approx(full.ks, rel=1e-12)
+
+
+def test_tight_cutoff_loses_the_predicted_charge():
+    """A deliberately tight cutoff must lose charge in the direction and rough
+    magnitude the analytic truncation fraction predicts -- a check that the
+    stencil bounds really are where the config says they are."""
+    full = run_simulation_numba(SimulationConfig(**SMALL, track_cutoff_sigmas=None), progress=False)
+    tight_config = SimulationConfig(**SMALL, track_cutoff_sigmas=1.5)
+    tight = run_simulation_numba(tight_config, progress=False)
+    assert tight_config.truncated_charge_fraction == pytest.approx(np.exp(-1.125))
+    # Losing the outer tails lowers the density and so lowers recombination.
+    assert tight.ks < full.ks
+
+
+@pytest.mark.parametrize("cutoff", [None, 8.0, 3.0])
+def test_backends_agree_for_any_cutoff(cutoff):
+    config = SimulationConfig(**SMALL, **TWO_SPECIES, track_cutoff_sigmas=cutoff)
+    reference = run_simulation(config, progress=False)
+    assert run_simulation_numba(config, progress=False).ks == pytest.approx(reference.ks, rel=1e-9)
+    assert run_simulation_numba_parallel(config, progress=False, num_threads=1).ks == pytest.approx(
+        reference.ks, rel=1e-9
+    )

@@ -74,14 +74,68 @@ from pulsed_ion_chamber.solver import Result, apply_lateral_boundary
 FloatArray3D = npt.NDArray[np.float64]
 FloatArray1D = npt.NDArray[np.float64]
 FloatArray2D = npt.NDArray[np.float64]
+IntArray1D = npt.NDArray[np.int64]
+
+
+@numba.njit(cache=True)
+def _build_row_index(lo_i: IntArray1D, hi_i: IntArray1D, no_xy: int):
+    """Bucket tracks by the grid rows their stencil covers (a CSR-style index).
+
+    Without this, the accumulation kernel below would have to test every track
+    against every row, an O(no_xy * n_tracks) scan that grows with the grid and
+    swamps the O(n_tracks * stencil^2) real work on a wide chamber. Building the
+    index costs O(n_tracks * stencil), the same order as the work it feeds.
+    """
+    n_tracks = lo_i.shape[0]
+    offsets = np.zeros(no_xy + 1, dtype=np.int64)
+    for t in range(n_tracks):
+        for i in range(lo_i[t], hi_i[t]):
+            offsets[i + 1] += 1
+    for i in range(no_xy):
+        offsets[i + 1] += offsets[i]
+
+    cursor = offsets[:no_xy].copy()
+    track_ids = np.empty(offsets[no_xy], dtype=np.int64)
+    for t in range(n_tracks):
+        for i in range(lo_i[t], hi_i[t]):
+            track_ids[cursor[i]] = t
+            cursor[i] += 1
+    return offsets, track_ids
 
 
 @numba.njit(parallel=True, cache=True)
-def _insert_tracks_step_numba_parallel(
+def _accumulate_track_density_numba_parallel(
+    total_density: FloatArray2D,
+    gauss_i: FloatArray2D,  # (n_tracks, width): gauss_i[t, m] at grid index lo_i[t] + m
+    gauss_j: FloatArray2D,
+    lo_i: IntArray1D,
+    lo_j: IntArray1D,
+    hi_j: IntArray1D,
+    offsets: IntArray1D,
+    track_ids: IntArray1D,
+    no_xy: int,
+) -> None:
+    """Sum every track's truncated 2D Gaussian into one (no_xy, no_xy) array.
+
+    Parallel over rows: iteration `i` writes only `total_density[i, :]`, so the
+    per-row accumulations are disjoint and need no locking even though many
+    tracks contribute to the same row. `offsets`/`track_ids` list exactly which
+    tracks reach row i, so no track is examined for a row it cannot touch.
+    """
+    for i in prange(no_xy):
+        for pos in range(offsets[i], offsets[i + 1]):
+            t = track_ids[pos]
+            gi = gauss_i[t, i - lo_i[t]]
+            base_j = lo_j[t]
+            for j in range(base_j, hi_j[t]):
+                total_density[i, j] += gi * gauss_j[t, j - base_j]
+
+
+@numba.njit(parallel=True, cache=True)
+def _broadcast_density_numba_parallel(
     positive_array: FloatArray3D,
     negative_array: FloatArray3D,
-    gauss_i: FloatArray2D,  # shape (n_tracks, no_xy): gauss_i[t, i] for track t
-    gauss_j: FloatArray2D,  # shape (n_tracks, no_xy): gauss_j[t, j] for track t
+    total_density: FloatArray2D,
     no_xy: int,
     no_z: int,
     no_z_electrode: int,
@@ -89,33 +143,26 @@ def _insert_tracks_step_numba_parallel(
     mid_xy: int,
     scoring_radius_sq: float,
 ) -> float:
-    """Deposit ALL of one time step's tracks in a single pass over the grid.
+    """Broadcast the step's combined 2D density into every z-layer of the gap.
 
-    Same separable-Gaussian identity as _insert_track_numba (exp(a+b) =
-    exp(a)*exp(b)), but summed over tracks *before* the O(no_z) broadcast
-    into every z-layer, instead of once per track -- see module docstring.
+    This is the O(no_z) part, done once per time step for the summed density
+    rather than once per track. Columns no track reached are skipped outright.
     """
-    n_tracks = gauss_i.shape[0]
     k_lo = no_z_electrode
     k_hi = no_z_electrode + no_z
-
     inserted = 0.0
     for idx in prange(no_xy * no_xy):
         i = idx // no_xy
         j = idx % no_xy
-        di_sq = (i - mid_xy) ** 2
-
-        total_density = 0.0
-        for t in range(n_tracks):
-            total_density += gauss_i[t, i] * gauss_j[t, j]
-        total_density *= gaussian_factor
-
+        density = total_density[i, j]
+        if density == 0.0:
+            continue
+        density *= gaussian_factor
         for k in range(k_lo, k_hi):
-            positive_array[i, j, k] += total_density
-            negative_array[i, j, k] += total_density
-        if di_sq + (j - mid_xy) ** 2 < scoring_radius_sq:
-            inserted += total_density * no_z
-
+            positive_array[i, j, k] += density
+            negative_array[i, j, k] += density
+        if (i - mid_xy) ** 2 + (j - mid_xy) ** 2 < scoring_radius_sq:
+            inserted += density * no_z
     return inserted
 
 
@@ -186,14 +233,27 @@ def _lax_wendroff_step_numba_parallel(
     return recombined
 
 
-def _precompute_track_gaussians(xs: FloatArray1D, ys: FloatArray1D, no_xy: int, h2: float, b2: float):
-    """Plain-NumPy, vectorized: gauss_i[t, i] = exp(-((i-xs[t])^2)*h2/b2),
-    same for gauss_j with ys -- one exp() per (track, grid-line) pair,
-    matching the per-track separable-Gaussian cost of solver_numba.py."""
-    coords = np.arange(no_xy)
-    gauss_i = np.exp(-((coords[None, :] - xs[:, None]) ** 2) * (h2 / b2))
-    gauss_j = np.exp(-((coords[None, :] - ys[:, None]) ** 2) * (h2 / b2))
-    return gauss_i, gauss_j
+def _precompute_track_gaussians(xs: FloatArray1D, ys: FloatArray1D, no_xy: int, h2: float, b2: float, cutoff_voxels: float):
+    """Separable Gaussian factors for a step's tracks, over their stencils only.
+
+    Returns (gauss_i, gauss_j, lo_i, hi_i, lo_j, hi_j). Row t of gauss_i holds
+    exp(-((lo_i[t] + m - xs[t])^2) * h2/b2) for m in [0, width); the kernel
+    reads only up to hi_i[t] - lo_i[t], so the trailing column that a
+    ragged stencil leaves unused is harmless.
+
+    exp() is called O(n_tracks * width) times rather than
+    O(n_tracks * width^2): exp(-(a+b)) = exp(-a) * exp(-b) is exact, so the 2D
+    Gaussian is the outer product of two 1D ones.
+    """
+    lo_i = np.maximum(np.ceil(xs - cutoff_voxels), 0.0).astype(np.int64)
+    hi_i = np.minimum(np.floor(xs + cutoff_voxels) + 1.0, float(no_xy)).astype(np.int64)
+    lo_j = np.maximum(np.ceil(ys - cutoff_voxels), 0.0).astype(np.int64)
+    hi_j = np.minimum(np.floor(ys + cutoff_voxels) + 1.0, float(no_xy)).astype(np.int64)
+    width = max(1, int(max((hi_i - lo_i).max(), (hi_j - lo_j).max())))
+    offsets = np.arange(width)
+    gauss_i = np.exp(-((lo_i[:, None] + offsets[None, :] - xs[:, None]) ** 2) * (h2 / b2))
+    gauss_j = np.exp(-((lo_j[:, None] + offsets[None, :] - ys[:, None]) ** 2) * (h2 / b2))
+    return gauss_i, gauss_j, lo_i, hi_i, lo_j, hi_j
 
 
 def warmup_parallel() -> None:
@@ -201,8 +261,13 @@ def warmup_parallel() -> None:
     dummy arrays -- see solver_numba.warmup() for why."""
     shape = (4, 4, 4)
     p, n, p_next, n_next = (np.zeros(shape) for _ in range(4))
-    gauss_i, gauss_j = _precompute_track_gaussians(np.array([2.0]), np.array([2.0]), 4, 1.0, 1.0)
-    _insert_tracks_step_numba_parallel(p, n, gauss_i, gauss_j, 4, 1, 1, 1.0, 2, 1.0)
+    total = np.zeros((4, 4))
+    gi, gj, li, hi, lj, hj = _precompute_track_gaussians(
+        np.array([2.0]), np.array([2.0]), 4, 1.0, 1.0, 4.0
+    )
+    offsets, track_ids = _build_row_index(li, hi, 4)
+    _accumulate_track_density_numba_parallel(total, gi, gj, li, lj, hj, offsets, track_ids, 4)
+    _broadcast_density_numba_parallel(p, n, total, 4, 1, 1, 1.0, 2, 1.0)
     _lax_wendroff_step_numba_parallel(
         p, n, p_next, n_next, 4, 4, 1, 1, 2, 1.0, 0.01, 0.01, 0.01, 0.97, 0.01, 0.01, 0.01, 0.97, 1e-9
     )
@@ -243,6 +308,8 @@ def run_simulation_numba_parallel(
 
     h2 = config.unit_length_cm**2
     b2 = config.track_radius_cm**2
+    cutoff_voxels = config.track_cutoff_voxels
+    total_density: FloatArray2D = np.zeros((config.no_xy, config.no_xy))
 
     no_initialised = 0.0
     no_recombined = 0.0
@@ -256,12 +323,18 @@ def run_simulation_numba_parallel(
             ys = np.empty(n_tracks_this_step)
             for t in range(n_tracks_this_step):
                 xs[t], ys[t] = sample_xy_inside_cylinder(rng, config.mid_xy, config.sampling_radius, config.no_xy)
-            gauss_i, gauss_j = _precompute_track_gaussians(xs, ys, config.no_xy, h2, b2)
-            no_initialised += _insert_tracks_step_numba_parallel(
+            gauss_i, gauss_j, lo_i, hi_i, lo_j, hi_j = _precompute_track_gaussians(
+                xs, ys, config.no_xy, h2, b2, cutoff_voxels
+            )
+            total_density[:] = 0.0
+            offsets, track_ids = _build_row_index(lo_i, hi_i, config.no_xy)
+            _accumulate_track_density_numba_parallel(
+                total_density, gauss_i, gauss_j, lo_i, lo_j, hi_j, offsets, track_ids, config.no_xy
+            )
+            no_initialised += _broadcast_density_numba_parallel(
                 positive_array,
                 negative_array,
-                gauss_i,
-                gauss_j,
+                total_density,
                 config.no_xy,
                 config.no_z,
                 config.no_z_electrode,

@@ -13,13 +13,11 @@ ION_MOBILITY_CM2_VS = 1.65  # cm^2 / (V s), averaged over positive/negative ions
 ION_DIFFUSION_CM2_S = 3.7e-2  # cm^2 / s, averaged over positive/negative ions
 RECOMBINATION_ALPHA_CM3_S = 1.60e-6  # cm^3 / s, recombination coefficient
 
-# Per-species Kanai (1998) values. The averaged constants above are what the
-# original IonTracks-Cython hadrons solvers use for *both* carriers
-# ("averaged for positive and negative ions"); IonTracks-FEniCSx carries the
-# two species separately instead. SimulationConfig defaults to the averaged
-# pair for backwards compatibility -- pass the four below (or set
-# two_carrier_species=True) to run the resolved model. See
-# examples/ifj_aic144/README.md sec. 4.1.
+# Per-species Kanai (1998) values. The averaged constants above lump both
+# carriers into one effective species, as IonTracks-Cython does; other codes
+# such as IonTracks-FEniCSx carry the
+# two species separately. SimulationConfig defaults to the averaged pair; pass
+# the four below to resolve them. See docs/PHYSICS.md sec. 8 for the trade-off.
 ION_MOBILITY_POSITIVE_CM2_VS = 1.36  # cm^2 / (V s)  (1.36e-4 m^2/(V s))
 ION_MOBILITY_NEGATIVE_CM2_VS = 2.10  # cm^2 / (V s)  (2.10e-4 m^2/(V s))
 ION_DIFFUSION_POSITIVE_CM2_S = 2.82e-2  # cm^2 / s  (2.82e-6 m^2/s)

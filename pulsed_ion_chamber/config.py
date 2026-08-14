@@ -13,7 +13,7 @@ long enough for ions to drift out of the gap.
 
 import warnings
 from dataclasses import dataclass
-from math import pi
+from math import exp, pi, sqrt
 from typing import Optional
 
 import numpy as np
@@ -101,8 +101,8 @@ class SimulationConfig:
     # Leaving all four of these None reproduces the original IonTracks-Cython
     # model exactly: one averaged mobility and one averaged diffusion
     # coefficient shared by both carriers. Setting them (see
-    # constants.ION_MOBILITY_POSITIVE_CM2_VS and friends) runs the
-    # IonTracks-FEniCSx model, with the two Kanai species resolved separately.
+    # constants.ION_MOBILITY_POSITIVE_CM2_VS and friends) resolves the two
+    # Kanai species separately. See docs/PHYSICS.md sec. 8.
     mu_positive_cm2_Vs: Optional[float] = None
     mu_negative_cm2_Vs: Optional[float] = None
     D_positive_cm2_s: Optional[float] = None
@@ -127,7 +127,7 @@ class SimulationConfig:
     #   boundary condition IonTracks-FEniCSx leaves on the cylinder wall. This
     #   is the better model of a sub-volume sampled from the *interior* of a
     #   large, uniformly irradiated chamber, where neighbouring gas returns as
-    #   much charge as it takes. See examples/ifj_aic144/README.md sec. 4.5.
+    #   much charge as it takes. See docs/PHYSICS.md sec. 10.
     lateral_boundary: str = "absorbing"
 
     # --- what counts towards injected charge and recombination ---
@@ -143,6 +143,16 @@ class SimulationConfig:
     #   volume: nothing enters or leaves sideways, so the edge systematic
     #   disappears and a much smaller column converges.
     scoring_region: str = "track_disc"
+
+    # --- how far a track's Gaussian is deposited before it is truncated ---
+    # In standard deviations. The radial dose distribution is written
+    # exp(-r^2/b^2), which is a Gaussian of standard deviation sigma = b/sqrt(2),
+    # so a cutoff of `n` sigma sits at r = n*b/sqrt(2) and discards a fraction
+    # exp(-n^2/2) of each track's charge. At the default 10 sigma that is
+    # 1.9e-22 -- six orders of magnitude below float64 epsilon, so the
+    # truncation is exact in the only sense that matters numerically.
+    # None disables truncation and deposits over the whole grid.
+    track_cutoff_sigmas: Optional[float] = 10.0
 
     seed: Optional[int] = None
 
@@ -279,6 +289,26 @@ class SimulationConfig:
         self.N0 = LET_eV_cm / self.W_eV
         self.Gaussian_factor = self.N0 / (pi * self.track_radius_cm**2)
 
+        # --- deposition stencil ---
+        self.track_sigma_cm = self.track_radius_cm / sqrt(2.0)
+        if self.track_cutoff_sigmas is None:
+            # No truncation: a box this wide always spans the whole grid, since
+            # no grid point can be further than no_xy voxels from any track.
+            self.track_cutoff_voxels = float(self.no_xy)
+            self.track_cutoff_cm = self.track_cutoff_voxels * self.unit_length_cm
+            self.truncated_charge_fraction = 0.0
+        else:
+            if self.track_cutoff_sigmas <= 0:
+                raise ValueError(
+                    f"track_cutoff_sigmas must be positive (or None for no truncation), "
+                    f"got {self.track_cutoff_sigmas!r}."
+                )
+            self.track_cutoff_cm = self.track_cutoff_sigmas * self.track_sigma_cm
+            self.track_cutoff_voxels = self.track_cutoff_cm / self.unit_length_cm
+            # Fraction of a track's charge discarded: for the 2D Gaussian
+            # exp(-r^2/b^2), the integral beyond radius R is exp(-R^2/b^2).
+            self.truncated_charge_fraction = exp(-((self.track_cutoff_cm / self.track_radius_cm) ** 2))
+
         # --- number of tracks injected per pulse, from the average dose rate ---
         dose_per_pulse_Gy = self.dose_rate_Gy_s / self.repetition_rate_hz
         instantaneous_dose_rate_Gy_s = dose_per_pulse_Gy / self.pulse_duration_s
@@ -367,6 +397,14 @@ class SimulationConfig:
                 f"{1.0 / self.chamber_fill_fraction**2:.3g}x nominal areal density)"
             )
         )
+        if self.track_cutoff_sigmas is None:
+            cutoff_note = "no truncation (whole grid per track)"
+        else:
+            cutoff_note = (
+                f"{self.track_cutoff_sigmas:.3g} sigma = "
+                f"{self.track_cutoff_cm * 1e4:.3g} um = {self.track_cutoff_voxels:.1f} voxels "
+                f"(discards {self.truncated_charge_fraction:.1e} of each track)"
+            )
         return (
             f"Particle              : {self.particle} @ {self.E_MeV_u:.1f} MeV/u "
             f"(LET = {self.LET_keV_um:.3g} keV/um, track radius b = {self.track_radius_cm * 1e4:.3g} um)\n"
@@ -376,7 +414,8 @@ class SimulationConfig:
             f"Gas / W               : rho_air = {self.air_density_kg_m3:.4g} kg/m^3, W = {self.W_eV:.4g} eV/ion pair\n"
             f"Sampled sub-volume    : radius = {self.sampled_radius_cm * 1e4:.3g} um, "
             f"area = {self.area_cm2:.3g} cm^2{fill_note}\n"
-            f"Lateral boundary      : {self.lateral_boundary}\n"
+            f"Lateral boundary      : {self.lateral_boundary}, scoring over {self.scoring_region}\n"
+            f"Deposition stencil    : {cutoff_note}\n"
             f"Grid                  : {self.no_xy} x {self.no_xy} x {self.no_z_with_buffer} voxels "
             f"({self.unit_length_cm * 1e4:.3g} um/voxel)\n"
             f"Time step dt          : {self.dt:.3e} s\n"

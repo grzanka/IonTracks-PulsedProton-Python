@@ -36,7 +36,7 @@ plain scalars/arrays instead; run_simulation_numba() unpacks the config
 once per call, mirroring what run_simulation() does in solver.py.
 """
 
-from math import exp
+from math import ceil, exp, floor
 from typing import Optional
 
 import numba
@@ -66,6 +66,7 @@ def _insert_track_numba(
     gaussian_factor: float,
     mid_xy: int,
     scoring_radius_sq: float,
+    cutoff_voxels: float,
 ) -> float:
     """Add one Gaussian ion track's charge density to both carrier arrays.
 
@@ -73,25 +74,33 @@ def _insert_track_numba(
     Gaussian cross-section is deposited identically into every z-layer
     from no_z_electrode to no_z_electrode + no_z -- there is no k-dependence
     in the density itself, only in how many layers it gets added to.
+
+    Only the square bounding box of cutoff_voxels around (x, y) is touched;
+    beyond it the Gaussian is truncated (see SimulationConfig.track_cutoff_sigmas).
     """
+    i_lo = max(int(ceil(x - cutoff_voxels)), 0)
+    i_hi = min(int(floor(x + cutoff_voxels)) + 1, no_xy)
+    j_lo = max(int(ceil(y - cutoff_voxels)), 0)
+    j_hi = min(int(floor(y + cutoff_voxels)) + 1, no_xy)
+
     # Separable Gaussian: exp(-((i-x)^2+(j-y)^2)*h2/b2) = gauss_i[i] * gauss_j[j].
-    # O(no_xy) calls to exp instead of O(no_xy^2).
-    gauss_i = np.empty(no_xy)
-    for i in range(no_xy):
-        gauss_i[i] = exp(-((i - x) ** 2) * h2 / b2)
-    gauss_j = np.empty(no_xy)
-    for j in range(no_xy):
-        gauss_j[j] = exp(-((j - y) ** 2) * h2 / b2)
+    # O(stencil) calls to exp instead of O(stencil^2).
+    gauss_i = np.empty(i_hi - i_lo)
+    for i in range(i_lo, i_hi):
+        gauss_i[i - i_lo] = exp(-((i - x) ** 2) * h2 / b2)
+    gauss_j = np.empty(j_hi - j_lo)
+    for j in range(j_lo, j_hi):
+        gauss_j[j - j_lo] = exp(-((j - y) ** 2) * h2 / b2)
 
     k_lo = no_z_electrode
     k_hi = no_z_electrode + no_z
 
     inserted = 0.0
-    for i in range(no_xy):
+    for i in range(i_lo, i_hi):
         di_sq = (i - mid_xy) ** 2
-        gi = gauss_i[i]
-        for j in range(no_xy):
-            ion_density = gaussian_factor * gi * gauss_j[j]
+        gi = gauss_i[i - i_lo]
+        for j in range(j_lo, j_hi):
+            ion_density = gaussian_factor * gi * gauss_j[j - j_lo]
             for k in range(k_lo, k_hi):
                 positive_array[i, j, k] += ion_density
                 negative_array[i, j, k] += ion_density
@@ -185,7 +194,7 @@ def warmup() -> None:
     """
     shape = (4, 4, 4)
     p, n, p_next, n_next = (np.zeros(shape) for _ in range(4))
-    _insert_track_numba(p, n, 2.0, 2.0, 4, 1, 1, 1.0, 1.0, 1.0, 2, 1.0)
+    _insert_track_numba(p, n, 2.0, 2.0, 4, 1, 1, 1.0, 1.0, 1.0, 2, 1.0, 4.0)
     _lax_wendroff_step_numba(
         p, n, p_next, n_next, 4, 4, 1, 1, 2, 1.0, 0.01, 0.01, 0.01, 0.97, 0.01, 0.01, 0.01, 0.97, 1e-9
     )
@@ -233,6 +242,7 @@ def run_simulation_numba(
                 config.Gaussian_factor,
                 config.mid_xy,
                 config.scoring_radius_sq,
+                config.track_cutoff_voxels,
             )
 
         no_recombined += _lax_wendroff_step_numba(

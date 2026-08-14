@@ -69,6 +69,7 @@ def estimate_full_runtime(config, n_track_samples=10, n_step_samples=3, rng=None
                 config.Gaussian_factor,
                 config.mid_xy,
                 config.scoring_radius_sq,
+                config.track_cutoff_voxels,
             )
 
         def step_once():

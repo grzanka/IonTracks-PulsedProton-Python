@@ -14,7 +14,7 @@ are the natural targets for parallelization.
 """
 
 from dataclasses import dataclass
-from math import exp
+from math import ceil, exp, floor
 from typing import Optional
 
 import numpy as np
@@ -49,6 +49,15 @@ def apply_lateral_boundary(array: np.ndarray, mode: str) -> None:
     array[:, -1, :] = array[:, -2, :]
 
 
+def _stencil_bounds(centre: float, cutoff_voxels: float, no_xy: int) -> tuple[int, int]:
+    """Half-open grid-index range [lo, hi) covered by a track's cutoff radius,
+    clipped to the grid. Shared by all three backends so they truncate
+    identically."""
+    lo = int(ceil(centre - cutoff_voxels))
+    hi = int(floor(centre + cutoff_voxels)) + 1
+    return max(lo, 0), min(hi, no_xy)
+
+
 @dataclass
 class Result:
     config: SimulationConfig
@@ -62,8 +71,10 @@ class Result:
 def _insert_track(positive_array, negative_array, x, y, config) -> float:
     """Add one Gaussian ion track's charge density to both carrier arrays.
 
-    O(no_xy^2 * no_z) per call -- the cost scales with the number of tracks
-    per pulse, which in turn scales with dose rate and sampled area.
+    The deposit is confined to the square bounding box of the track's cutoff
+    radius (config.track_cutoff_voxels); outside it the Gaussian is below
+    exp(-cutoff_sigmas^2/2) of the track's total charge and is dropped. Cost is
+    O(stencil^2 * no_z) rather than O(no_xy^2 * no_z).
     """
     inserted = 0.0
     b2 = config.track_radius_cm**2
@@ -71,9 +82,12 @@ def _insert_track(positive_array, negative_array, x, y, config) -> float:
     mid = config.mid_xy
     scoring_radius_sq = config.scoring_radius_sq
     gaussian_factor = config.Gaussian_factor
+    cutoff = config.track_cutoff_voxels
+    i_lo, i_hi = _stencil_bounds(x, cutoff, config.no_xy)
+    j_lo, j_hi = _stencil_bounds(y, cutoff, config.no_xy)
     for k in range(config.no_z_electrode, config.no_z + config.no_z_electrode):
-        for i in range(config.no_xy):
-            for j in range(config.no_xy):
+        for i in range(i_lo, i_hi):
+            for j in range(j_lo, j_hi):
                 r2 = ((i - x) ** 2 + (j - y) ** 2) * h2
                 ion_density = gaussian_factor * exp(-r2 / b2)
                 positive_array[i, j, k] += ion_density

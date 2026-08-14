@@ -237,8 +237,19 @@ print(result.f_t)     # collection efficiency vs. time
 | `sampled_radius_cm` | Radius of the simulated cylindrical sub-volume (bigger = more statistically representative, much slower) |
 | `buffer_radius`, `no_z_electrode` | Margin voxels so charge never drifts off the array edge in one step |
 | `n_clearance_separation_times` | How many ion-transit times to keep simulating after the last pulse, so charge can clear the gap |
+| `track_cutoff_sigmas` | How far a track's Gaussian is deposited before truncation (default 10 sigma, which discards 1.9e-22 of it -- lossless in float64) |
+| `mu_positive_cm2_Vs`, `mu_negative_cm2_Vs`, `D_positive_cm2_s`, `D_negative_cm2_s` | Per-species transport constants; leave `None` to use one averaged pair for both carriers |
+| `W_eV`, `air_density_kg_m3` | Mean energy per ion pair, and the reference condition the dose is quoted at |
+| `lateral_boundary` | `"absorbing"` or `"reflecting"` (zero-flux) chamber wall |
+| `scoring_region` | `"track_disc"` or `"full_grid"` -- which voxels count towards injected and recombined charge |
+| `chamber_fill_fraction` | Fraction of the scored disc that tracks are actually placed in (1.0 = self-consistent) |
 | `rf_frequency_hz` | Optional: the accelerator's RF (e.g. a cyclotron's ~10-100 MHz extraction RF), purely diagnostic -- see below |
 | `seed` | RNG seed for track positions/arrival times |
+
+**Full documentation:** [`docs/PHYSICS.md`](docs/PHYSICS.md) describes every
+physical and numerical assumption and why it is made;
+[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) covers the cost model, measured
+timings and scaling.
 
 ### Are protons injected all at once, and where does the accelerator's RF fit in?
 
@@ -272,6 +283,9 @@ see `tests/test_grid_and_timing.py` for both cases.
 ## Repository layout
 
 ```
+docs/
+  PHYSICS.md          Every physical/numerical assumption, and its justification
+  PERFORMANCE.md      Cost model, measured timings, scaling, many-core guidance
 pulsed_ion_chamber/
   constants.py       Kanai (1998) air ion-transport constants
   stopping_power.py  LET lookup (PSTAR/libamtrack data), track-radius fit, dose-rate -> fluence-rate
@@ -285,6 +299,7 @@ pulsed_ion_chamber/
   data/               Packaged LET/stopping-power tables
 examples/
   run_pulsed_proton_beam.py
+  ifj_aic144/         IFJ PAN AIC-144 Markus 2 mm scenario (README + runner)
 tests/
   test_single_track_vs_jaffe.py
   test_grid_and_timing.py
