@@ -17,9 +17,9 @@ calls.
 
 The `full_electrode` tier (536² × 210, 1.9 GiB of carrier arrays, 2194 steps) at
 **1, 2, 4, 8, 16, 32, 64 and 128 threads**, at **10 and 50 Gy/s to water** —
-16 runs, submitted as **16 independent jobs**. Always the batched backend, including at one thread: comparing thread
-counts means holding the backend fixed, and the unbatched one would take hours
-on this grid.
+16 runs, submitted as **16 independent jobs**. Always the batched backend,
+including at one thread: comparing thread counts means holding the backend
+fixed, and the unbatched one would take hours on this grid.
 
 The two dose rates are there because they stress different halves of the code.
 The PDE sweep does not depend on dose rate at all; the deposition phases scale
@@ -32,8 +32,8 @@ direct measurement of how much serial work is left in deposition.
 | | |
 |---|---|
 | `../../submit.sh` | The entry point. Preflight checks, then calls `submit_all.sh`. |
-| `submit_all.sh` | One `sbatch` per thread count, each requesting exactly the cores it uses, each with a walltime sized from measured times. |
-| `scaling_job.sbatch` | The job itself: loads the module, asserts its CPU affinity matches what it asked for, then loops over dose rates. |
+| `submit_all.sh` | One `sbatch` per (thread count, dose rate), each requesting exactly the cores it uses, with memory and walltime sized from measured runs. |
+| `scaling_job.sbatch` | The job itself: loads the module, asserts its CPU affinity matches what it asked for, then runs. |
 | `collect.py` | Reads the JSONs into tables — and refuses to print them until it has checked that `k_s` agrees across thread counts and that every run had the CPUs it claimed. |
 
 Results: `profiling/data/helios_scaling/threads{N}_dose{R}.json`, job logs in
