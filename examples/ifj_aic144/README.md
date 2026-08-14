@@ -536,6 +536,62 @@ Net for the archive case, all ports enabled: **2.63 s → 2.02 s, 23 % faster**
 than the v1 baseline, because the buffer saving more than covers the extra time
 steps. The ported physics is not a performance regression.
 
+### 7.1 Cost of simulating the full electrode
+
+The Classic Markus PTW 23343 collecting electrode is **5.3 mm** in diameter
+(r = 2.65 mm), giving 0.2206 cm² of area and 0.0441 cm³ of gas across the 2 mm
+gap. **That diameter appears nowhere in any of the four repositories** — not in
+`SimulationConfig`, not in the FEniCSx `geometry` block, not in v1's
+`continuous_beam`. Only the gap and the bias are modelled; the archive states
+this outright ("the real electrode diameter, the guard ring and edge effects are
+**not** modelled"), and its `PHYSICS.md` mentions the electrode only as prose,
+rounded to "the full 5 mm-diameter electrode". So the figure below is what the
+full electrode *would* cost, not a configuration anyone has run.
+
+At `grid_size_um=10.0` and `buffer_radius=3`:
+
+```
+grid          536 x 536 x 210 = 60.3 M voxels   (under the 1e8 max_voxels guard)
+tracks/pulse  24 630 400                        (487x the archived 0.12 mm column)
+time steps    2 194
+memory        1.80 GiB  (four float64 arrays)
+```
+
+Track insertion is **98 %** of the work at this size, so the estimate is
+essentially `n_tracks × no_xy²` divided by a measured rate. Anchored on directly
+measured runs at r = 300/500/800 µm (11.5 s / 56.7 s / 178.7 s, batched backend,
+one thread), where the insertion rate rises from 2.6e8 to 4.1e8 ops/s as the
+grid grows and then flattens:
+
+| backend | full-electrode estimate |
+|---|---|
+| `solver_numba` (unbatched) | **~16 days** |
+| `solver_numba_parallel`, 1 thread (batched) | **~5 h** (3.4–7.7 h over the rate range) |
+| batched **+ a local Gaussian stencil** (not implemented) | **~7 min** |
+
+Note the measured scaling is *not* yet the asymptotic r⁴ over this range —
+178.7/56.7 = 3.15 for r×1.6 where r⁴ predicts 6.55 — because the runs are still
+partly broadcast-bound and the insertion rate itself improves with grid size.
+The table uses the op-count model with the best measured rate rather than a
+naive power-law fit, which is why it is quoted as a range.
+
+**Two caveats before anyone runs this.**
+
+First, it buys nothing physically *as the model stands*. The field is uniform,
+there is no guard ring, and the track density is homogeneous, so the full
+electrode is 350 identical copies of a column that already converged at 140 µm
+(§3). It would return the same k_s with better statistics. Simulating the real
+electrode would only be meaningful alongside the edge physics that motivates it
+— field distortion at the guard ring — which is not in either code.
+
+Second, the ~700× between the batched and local-stencil rows is the honest
+headline. A track's Gaussian has b = 20 µm = 2 voxels, so a ±5b stencil covers
+**0.139 %** of a 536² grid; the other 99.86 % of every track's insertion loop
+adds `exp(-25)` and smaller. Both current backends evaluate the full grid per
+track, which costs nothing at r = 80 µm (22² grid) and dominates completely at
+r = 2.65 mm. If the full electrode is ever wanted, the local stencil — not more
+cores — is the change that makes it a coffee break instead of a day.
+
 ## 8. Net effect on the comparison
 
 With all of §5 enabled at the archive geometry this repository gives
