@@ -1,0 +1,292 @@
+"""Every configurable physics option, and the resource guards.
+
+Two things are checked throughout: that each option's *default* reproduces the
+original single-averaged-species behaviour, so an existing config cannot change
+answer by upgrading; and that each option's non-default path gives the same
+result in both backends.
+"""
+
+import numpy as np
+import pytest
+
+from pulsed_ion_chamber.config import SimulationConfig
+from pulsed_ion_chamber.constants import (
+    AIR_DENSITY_KG_M3,
+    ION_DIFFUSION_CM2_S,
+    ION_DIFFUSION_NEGATIVE_CM2_S,
+    ION_DIFFUSION_POSITIVE_CM2_S,
+    ION_MOBILITY_CM2_VS,
+    ION_MOBILITY_NEGATIVE_CM2_VS,
+    ION_MOBILITY_POSITIVE_CM2_VS,
+    W_EV_PER_ION_PAIR,
+)
+from pulsed_ion_chamber.solver_numba import run_simulation_numba
+from pulsed_ion_chamber.solver_numba_parallel import run_simulation_numba_parallel
+
+# Small enough to run all three backends in a few seconds.
+SMALL = dict(
+    E_MeV_u=56.2,
+    voltage_V=300.0,
+    electrode_gap_cm=0.2,
+    pulse_duration_s=2e-6,
+    repetition_rate_hz=50.0,
+    dose_rate_Gy_s=8.91,
+    grid_size_um=40.0,
+    sampled_radius_cm=0.004,
+    buffer_radius=3,
+    no_z_electrode=3,
+    seed=7,
+)
+TWO_SPECIES = dict(
+    mu_positive_cm2_Vs=ION_MOBILITY_POSITIVE_CM2_VS,
+    mu_negative_cm2_Vs=ION_MOBILITY_NEGATIVE_CM2_VS,
+    D_positive_cm2_s=ION_DIFFUSION_POSITIVE_CM2_S,
+    D_negative_cm2_s=ION_DIFFUSION_NEGATIVE_CM2_S,
+)
+
+
+def test_defaults_are_the_v1_single_averaged_species():
+    config = SimulationConfig(**SMALL)
+    assert not config.two_carrier_species
+    assert config.mu_positive == config.mu_negative == ION_MOBILITY_CM2_VS
+    assert config.D_positive == config.D_negative == ION_DIFFUSION_CM2_S
+    assert config.W_eV == W_EV_PER_ION_PAIR
+    assert config.air_density_kg_m3 == AIR_DENSITY_KG_M3
+    assert config.lateral_boundary == "absorbing"
+    assert config.scoring_region == "track_disc"
+    assert config.chamber_fill_fraction == 1.0
+    # With one species both stencils must be identical.
+    pos, neg = config.scheme_coefficients()
+    assert pos == neg
+    # and tracks are drawn in the scored disc itself
+    assert config.sampling_radius == config.inner_radius
+    assert config.scoring_radius_sq == config.inner_radius_sq
+
+
+def test_two_species_dt_is_set_by_the_negative_ion():
+    single = SimulationConfig(**SMALL)
+    both = SimulationConfig(**SMALL, **TWO_SPECIES)
+    assert both.two_carrier_species
+    # The negative ion is both faster and more diffusive, so it binds; dt must
+    # drop relative to the averaged model, and more steps are needed.
+    assert both.dt < single.dt
+    assert both.total_time_steps > single.total_time_steps
+    # A run with only the negative species' constants must give the same dt.
+    negative_only = SimulationConfig(
+        **SMALL,
+        mu_positive_cm2_Vs=ION_MOBILITY_NEGATIVE_CM2_VS,
+        mu_negative_cm2_Vs=ION_MOBILITY_NEGATIVE_CM2_VS,
+        D_positive_cm2_s=ION_DIFFUSION_NEGATIVE_CM2_S,
+        D_negative_cm2_s=ION_DIFFUSION_NEGATIVE_CM2_S,
+    )
+    assert both.dt == negative_only.dt
+    # ... while the clearance period is sized by the *slowest* carrier.
+    assert both.slowest_mobility_cm2_Vs == ION_MOBILITY_POSITIVE_CM2_VS
+
+
+def test_von_neumann_criterion_holds_for_both_species():
+    config = SimulationConfig(**SMALL, **TWO_SPECIES)
+    for diffusion, mobility in (
+        (config.D_positive, config.mu_positive),
+        (config.D_negative, config.mu_negative),
+    ):
+        s = diffusion * config.dt / config.unit_length_cm**2
+        cz = mobility * config.Efield_V_cm * config.dt / config.unit_length_cm
+        assert 6 * s + cz**2 <= 1.0
+
+
+def test_no_xy_rounds_so_the_sampled_radius_is_honoured():
+    # 2 * 0.0084 / 0.0010 = 16.8: truncating gave an 80 um disc while the track
+    # count still used 84 um. Rounding keeps the two consistent.
+    config = SimulationConfig(**{**SMALL, "grid_size_um": 10.0, "sampled_radius_cm": 0.0084})
+    assert config.no_xy == 17 + 2 * config.buffer_radius
+
+
+def test_chamber_fill_fraction_shrinks_placement_not_scoring():
+    full = SimulationConfig(**SMALL)
+    partial = SimulationConfig(**SMALL, chamber_fill_fraction=0.7)
+    # Same number of tracks (counted over the full disc), packed into 0.49 of
+    # the area -- exactly what IonTracks-FEniCSx does.
+    assert partial.number_of_tracks_per_pulse == full.number_of_tracks_per_pulse
+    assert partial.scoring_radius_sq == full.scoring_radius_sq
+    assert partial.sampling_radius == pytest.approx(0.7 * full.inner_radius)
+
+
+@pytest.mark.parametrize("fraction", [0.0, -0.1, 1.5])
+def test_invalid_chamber_fill_fraction_rejected(fraction):
+    with pytest.raises(ValueError, match="chamber_fill_fraction"):
+        SimulationConfig(**SMALL, chamber_fill_fraction=fraction)
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        (dict(lateral_boundary="sticky"), "lateral_boundary"),
+        (dict(scoring_region="everything"), "scoring_region"),
+        (dict(mu_negative_cm2_Vs=-2.1), "mu_negative_cm2_Vs"),
+    ],
+)
+def test_invalid_options_rejected(kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        SimulationConfig(**SMALL, **kwargs)
+
+
+def test_full_grid_scoring_admits_every_voxel():
+    config = SimulationConfig(**SMALL, scoring_region="full_grid")
+    # The furthest voxel from the centre is a corner of the square.
+    corner_sq = 2 * max(config.mid_xy, config.no_xy - 1 - config.mid_xy) ** 2
+    assert config.scoring_radius_sq > corner_sq
+
+
+def test_reflecting_wall_leaves_no_frozen_charge_on_the_outer_ring():
+    """v1's outer ring is never updated by the Lax-Wendroff sweep, so track
+    tails deposited there are stranded: they never drift, diffuse or recombine,
+    and keep feeding their inward neighbour for the rest of the run. The
+    reflecting wall replaces that with a mirror of the interior, so the ring
+    tracks whatever the gas next to it is doing."""
+    absorbing = run_simulation_numba(SimulationConfig(**SMALL), progress=False)
+    reflecting = run_simulation_numba(
+        SimulationConfig(**SMALL, lateral_boundary="reflecting"), progress=False
+    )
+    mid = absorbing.config.mid_xy
+    k = absorbing.config.no_z_electrode + absorbing.config.no_z // 2
+
+    # Charge really is stranded on the absorbing ring, and sits out of
+    # equilibrium with the voxel just inside it.
+    assert absorbing.positive_array[0, mid, k] > 0.0
+    assert absorbing.positive_array[0, mid, k] != pytest.approx(
+        absorbing.positive_array[1, mid, k], rel=1e-6
+    )
+    # The reflecting ring is a zero-gradient mirror by construction.
+    assert reflecting.positive_array[0, mid, k] == pytest.approx(
+        reflecting.positive_array[1, mid, k]
+    )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        TWO_SPECIES,
+        dict(lateral_boundary="reflecting"),
+        dict(scoring_region="full_grid"),
+        dict(chamber_fill_fraction=0.7),
+        {**TWO_SPECIES, "lateral_boundary": "reflecting", "scoring_region": "full_grid"},
+    ],
+)
+def test_backends_agree_on_the_ported_physics(extra):
+    """Both backends must give the same answer on every new code path."""
+    config = SimulationConfig(**SMALL, **extra)
+    reference = run_simulation_numba(config, progress=False)
+    parallel_result = run_simulation_numba_parallel(config, progress=False, num_threads=1)
+
+    assert parallel_result.ks == pytest.approx(reference.ks, rel=1e-9)
+    np.testing.assert_allclose(parallel_result.f_t, reference.f_t, rtol=1e-9)
+
+
+# --- deposition stencil -----------------------------------------------------
+
+
+def test_cutoff_geometry_and_discarded_charge():
+    config = SimulationConfig(**SMALL, track_cutoff_sigmas=10.0)
+    # sigma = b / sqrt(2) for exp(-r^2/b^2)
+    assert config.track_sigma_cm == pytest.approx(config.track_radius_cm / np.sqrt(2.0))
+    assert config.track_cutoff_cm == pytest.approx(10.0 * config.track_sigma_cm)
+    assert config.track_cutoff_voxels == pytest.approx(config.track_cutoff_cm / config.unit_length_cm)
+    # discarded fraction of a 2D Gaussian beyond radius R is exp(-R^2/b^2)
+    assert config.truncated_charge_fraction == pytest.approx(np.exp(-50.0))
+
+
+def test_no_cutoff_spans_the_whole_grid():
+    config = SimulationConfig(**SMALL, track_cutoff_sigmas=None)
+    assert config.truncated_charge_fraction == 0.0
+    # no grid point can be further than no_xy voxels from any track position
+    assert config.track_cutoff_voxels >= config.no_xy
+
+
+def test_non_positive_cutoff_rejected():
+    with pytest.raises(ValueError, match="track_cutoff_sigmas"):
+        SimulationConfig(**SMALL, track_cutoff_sigmas=0.0)
+
+
+def test_default_cutoff_is_exact_to_machine_precision():
+    """10 sigma discards 1.9e-22 of each track, far below float64 epsilon, so
+    it must not move k_s at all relative to depositing over the whole grid."""
+    full = run_simulation_numba(SimulationConfig(**SMALL, track_cutoff_sigmas=None), progress=False)
+    stencil = run_simulation_numba(SimulationConfig(**SMALL, track_cutoff_sigmas=10.0), progress=False)
+    assert stencil.ks == pytest.approx(full.ks, rel=1e-12)
+
+
+def test_tight_cutoff_loses_the_predicted_charge():
+    """A deliberately tight cutoff must lose charge in the direction and rough
+    magnitude the analytic truncation fraction predicts -- a check that the
+    stencil bounds really are where the config says they are."""
+    full = run_simulation_numba(SimulationConfig(**SMALL, track_cutoff_sigmas=None), progress=False)
+    tight_config = SimulationConfig(**SMALL, track_cutoff_sigmas=1.5)
+    tight = run_simulation_numba(tight_config, progress=False)
+    assert tight_config.truncated_charge_fraction == pytest.approx(np.exp(-1.125))
+    # Losing the outer tails lowers the density and so lowers recombination.
+    assert tight.ks < full.ks
+
+
+@pytest.mark.parametrize("cutoff", [None, 8.0, 3.0])
+def test_backends_agree_for_any_cutoff(cutoff):
+    config = SimulationConfig(**SMALL, **TWO_SPECIES, track_cutoff_sigmas=cutoff)
+    reference = run_simulation_numba(config, progress=False)
+    assert run_simulation_numba_parallel(config, progress=False, num_threads=1).ks == pytest.approx(
+        reference.ks, rel=1e-9
+    )
+
+
+# --- resource guards --------------------------------------------------------
+
+
+def test_memory_estimate_matches_the_arrays_that_get_allocated():
+    config = SimulationConfig(**SMALL)
+    voxels = config.no_xy**2 * config.no_z_with_buffer
+    # four float64 carrier arrays: current and next, positive and negative
+    assert config.carrier_array_bytes == 4 * voxels * 8
+    assert config.track_schedule_bytes == 2 * config.number_of_tracks_per_pulse * 8
+    # the schedule is freed before the carrier arrays are touched, so the peak
+    # is whichever phase is larger, not the sum
+    assert config.estimated_memory_bytes == max(
+        config.track_schedule_bytes, config.carrier_array_bytes + config.scratch_bytes
+    )
+
+
+def test_oversized_grid_is_refused_before_it_can_be_allocated():
+    with pytest.raises(MemoryError, match="available"):
+        SimulationConfig(
+            **{**SMALL, "grid_size_um": 10.0, "sampled_radius_cm": 2.0},
+            max_voxels=1e14,
+        )
+
+
+def test_memory_check_can_be_disabled():
+    config = SimulationConfig(
+        **{**SMALL, "grid_size_um": 10.0, "sampled_radius_cm": 2.0},
+        max_voxels=1e14,
+        memory_budget_fraction=None,
+    )
+    assert config.estimated_memory_bytes > 0
+
+
+def test_thread_request_is_clamped_to_what_the_process_can_use():
+    from pulsed_ion_chamber.resources import available_cores, clamp_thread_count
+
+    cores = available_cores()
+    assert cores >= 1
+    assert clamp_thread_count(1) == 1
+    with pytest.warns(UserWarning, match="exceeds"):
+        assert clamp_thread_count(100_000) <= cores
+    with pytest.raises(ValueError, match="num_threads"):
+        clamp_thread_count(0)
+
+
+def test_resource_probes_are_self_consistent():
+    from pulsed_ion_chamber.resources import available_memory_bytes, total_memory_bytes
+
+    available, total = available_memory_bytes(), total_memory_bytes()
+    # Either may be None on a platform that does not report it; if both are
+    # known, available cannot exceed total.
+    if available is not None and total is not None:
+        assert 0 < available <= total

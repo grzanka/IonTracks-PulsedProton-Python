@@ -13,7 +13,8 @@ import numba
 
 from profiling.common import run_once
 from pulsed_ion_chamber.solver_numba_parallel import (
-    _insert_tracks_step_numba_parallel,
+    _accumulate_track_density_numba_parallel,
+    _broadcast_density_numba_parallel,
     _lax_wendroff_step_numba_parallel,
 )
 
@@ -53,9 +54,13 @@ def main() -> None:
         # parallel_diagnostics() needs parfor metadata that a cache=True
         # dispatcher doesn't retain when loaded from an on-disk cache hit
         # (only a fresh compile keeps it) -- force one via recompile().
-        print("=== parallel_diagnostics: _insert_tracks_step_numba_parallel ===")
-        _insert_tracks_step_numba_parallel.recompile()
-        _insert_tracks_step_numba_parallel.parallel_diagnostics(level=4)
+        for name, kernel in (
+            ("_accumulate_track_density_numba_parallel", _accumulate_track_density_numba_parallel),
+            ("_broadcast_density_numba_parallel", _broadcast_density_numba_parallel),
+        ):
+            print(f"=== parallel_diagnostics: {name} ===")
+            kernel.recompile()
+            kernel.parallel_diagnostics(level=4)
         print()
         print("=== parallel_diagnostics: _lax_wendroff_step_numba_parallel ===")
         _lax_wendroff_step_numba_parallel.recompile()

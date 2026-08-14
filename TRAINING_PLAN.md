@@ -97,8 +97,8 @@ structurally can't and propose the right way to use ~190 cores instead."
    scale -- this is the actual right answer per the existing
    investigation, so an agent that reaches it independently has done the
    core reasoning correctly even without new code.
-2. Finds a further **algorithmic** improvement to `_insert_tracks_step_
-   numba_parallel`/`_lax_wendroff_step_numba_parallel` beyond the existing
+2. Finds a further **algorithmic** improvement to `_accumulate_track_density_numba_parallel`/
+   `_broadcast_density_numba_parallel`/`_lax_wendroff_step_numba_parallel` beyond the existing
    batching fix (e.g. reducing per-step parallel-region launch count
    further, larger time-step batching, a different data layout).
 3. Gets real threaded scaling past 1 socket by addressing the fork-join
@@ -115,13 +115,13 @@ structurally can't and propose the right way to use ~190 cores instead."
    below) against the new code; regenerate `scientific_validation.py`'s
    output to confirm `k_s`/`f(t)` still match Jaffe theory and the
    pre-change baseline (tolerance: float non-associativity only, ~1e-6
-   relative, per `tests/test_solver_numba_parallel.py`'s existing
+   relative, per `tests/test_backends_agree.py`'s existing
    tolerance).
 3. Compare before/after plots; iterate.
 4. Land the change with its own tests (extend
-   `tests/test_solver_numba_parallel.py`'s pattern) and update
-   `README.md`'s "Running on many cores" section with the new numbers --
-   don't let the committed prose go stale relative to the code.
+   `tests/test_backends_agree.py`'s pattern) and update
+   `docs/PERFORMANCE.md` with the new numbers -- don't let the committed
+   prose go stale relative to the code.
 
 **Grading Phase 2**: did wall time actually improve on the converged
 grid? Did it improve *for the right reason* (i.e. does the Phase 2
@@ -134,8 +134,8 @@ agent) could verify without re-running the whole sweep?
 
 - Every Slurm step needs `srun --overlap --cpus-per-task=N --cpu-bind=none`
   -- a bare `python` in an interactive allocation's shell is itself
-  cpuset-restricted to 1 CPU regardless of the job's size. See the
-  top-level `README.md`'s "cpuset gotcha" and `profiling/README.md`'s
+  cpuset-restricted to 1 CPU regardless of the job's size. See
+  `docs/PERFORMANCE.md`'s "Slurm / cpuset caveat" and `profiling/README.md`'s
   "Reproducing" section for exact invocations.
 - `module load GCCcore/13.3.0 Python/3.12.3` must be repeated in every
   new shell before `source venv/bin/activate`.

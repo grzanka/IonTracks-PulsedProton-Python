@@ -2,12 +2,9 @@
 """Example: recombination in a parallel-plate ionization chamber exposed to
 a pulsed proton beam (540 us pulses, 50 Hz, 60 Gy/s average dose rate).
 
-Single-threaded Numba (pulsed_ion_chamber.solver_numba) is the baseline
-backend for this repository -- everything below runs through it. The
-plain pure-Python reference implementation (pulsed_ion_chamber.solver) is
-what solver_numba.py was JIT-compiled from; it's ~10x slower (see
-tests/test_solver_numba.py for a direct comparison on a small config) and
-is not run here.
+Everything below runs through pulsed_ion_chamber.solver_numba, which
+deposits tracks one at a time. For dense pulses or large grids use
+solver_numba_parallel instead; the two agree to 1e-9.
 
 1. Runs the pulsed-proton scenario on a grid about 3.6 ion-track-radii
    wide (still coarser than the ~6-track-radii "converged" grid from the

@@ -42,9 +42,15 @@ def calc_track_radius_cm(LET_keV_um):
     return max(b_cm, threshold)
 
 
-def dose_rate_to_fluence_rate(dose_rate_Gy_s, E_MeV_u, particle="proton"):
-    """Convert a dose-rate in dry air [Gy/s] to a fluence-rate [cm^-2 s^-1]."""
+def dose_rate_to_fluence_rate(dose_rate_Gy_s, E_MeV_u, particle="proton", air_density_kg_m3=None):
+    """Convert a dose-rate in dry air [Gy/s] to a fluence-rate [cm^-2 s^-1].
+
+    air_density_kg_m3 selects the reference condition the dose is quoted at;
+    the fluence scales linearly with it. Defaults to constants.AIR_DENSITY_KG_M3
+    (1.225, the ISA sea-level value inherited from IonTracks-Cython).
+    """
     LET_keV_um = E_MeV_u_to_LET_keV_um(E_MeV_u, particle)
     LET_keV_cm = LET_keV_um * 1e4
-    density_kg_cm3 = AIR_DENSITY_KG_M3 * 1e-6
+    density = AIR_DENSITY_KG_M3 if air_density_kg_m3 is None else air_density_kg_m3
+    density_kg_cm3 = density * 1e-6
     return dose_rate_Gy_s * JOULE_TO_KEV * density_kg_cm3 / LET_keV_cm
