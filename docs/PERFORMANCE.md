@@ -40,7 +40,7 @@ grows as the fourth power of the column radius.
 AIC-144 Markus 2 mm scenario (`examples/ifj_aic144/run_markus_2mm.py`), 10 µm
 voxels, `buffer_radius=3`, two carrier species, 10 σ stencil, 2194 time steps:
 
-| tier | `sampled_radius_cm` | grid | tracks/pulse | wall time | k_s | edge bias |
+| tier | `sampled_radius_cm` | grid | tracks/pulse | wall time (1 thread) | k_s | edge bias |
 |---|---|---|---|---|---|---|
 | `dev` | 0.003 (30 µm) | 12²×210 | 3 157 | 0.2 s | 1.0580 | −4.9 % |
 | `archive` | 0.008 (80 µm) | 22²×210 | 22 447 | 1.8 s | 1.0929 | −1.7 % |
@@ -137,7 +137,8 @@ run, not just estimated — `run_markus_2mm.py full_electrode`:
 grid          536 × 536 × 210 = 60.3 M voxels
 tracks/pulse  24 630 400
 time steps    2 194
-wall time     768 s = 12.8 min   (batched backend, one thread)
+wall time     768 s = 12.8 min   (batched backend, one thread; 843 s with the
+                                 per-step record enabled, 646 s at 2 threads)
 peak RSS      2.02 GiB           (1.80 GiB of carrier arrays + interpreter and temporaries)
 result        f = 0.900037,  k_s = 1.111065
 ```
@@ -209,29 +210,86 @@ point the answer would no longer be a scaled copy of the interior.
 
 ## 6. Using many cores
 
-For a single run of a normal-sized scenario, **use one thread.** Measured on a
-dual-EPYC 192-core node, wall time got *worse* with more threads (22.9 s at 1
-thread, 37–44 s at 8–190 with the `omp` threading layer). After track insertion
-is batched per step, each parallel region does very little work — a few hundred
-microseconds — but there are thousands of them, and fork/join and barrier cost
-across NUMA domains dominates. Numba's `workqueue` layer has lower fixed
-overhead and does modestly better, but not reliably enough to matter.
+**Both hot loops are memory-bandwidth-bound, not compute-bound.** They stream
+the whole grid every step, and on a machine whose memory controller a single
+core can nearly saturate, extra threads have nothing left to win. Measure
+before assuming.
 
-The exceptions are large grids (§5), where each parallel region finally has
-enough work to amortise its launch cost.
+### The ceiling is the memory subsystem
 
-**The right way to spend many cores is independent replicas**, not threads:
-different seeds, or a sweep over dose rate, energy and voltage, run as separate
-single-threaded processes. Measured: 64 concurrent single-threaded replicas via
-`multiprocessing.Pool(64)` finished in 69 s against ~1600 s for the same 64 runs
-sequentially — a ~23× aggregate speed-up for 64× the statistics. The shortfall
-from a theoretical 64× is memory-bandwidth and L3 contention plus concurrent JIT
-compilation; a Slurm job array of `--exclusive` single-core jobs avoids most of
-it.
+A pure STREAM triad — the simplest possible memory-bound kernel — on the
+development machine (Intel Core Ultra 5 225U, 12 cores / 14 threads, LPDDR5,
+one NUMA node):
 
-`run_simulation_numba_parallel(num_threads=...)` clamps the request to the
-process's CPU affinity mask and to Numba's configured maximum, warning when it
-does, so a benchmark cannot report a thread count that never existed.
+| threads | triad | interior copy |
+|---|---|---|
+| 1 | 21.5 GB/s | 20.8 GB/s |
+| 2 | 25.5 | 23.8 |
+| 4 | 29.2 | 24.1 |
+| 14 | 26.3 | 26.7 |
+
+One core already reaches ~21 GB/s of a ~29 GB/s practical ceiling, so **nothing
+memory-bound on this machine can gain more than ~1.35x**, whatever the thread
+count.
+
+The Lax-Wendroff sweep behaves exactly as that predicts — peaking at two
+threads and degrading beyond:
+
+| threads | sweep | broadcast | deposition |
+|---|---|---|---|
+| 1 | 195 ms (1.00x) | 66 ms (1.00x) | 9.2 ms (1.00x) |
+| **2** | 117 ms (**1.67x**) | 55 ms (1.20x) | 4.7 ms (1.99x) |
+| 4 | 124 ms (1.58x) | 52 ms (1.26x) | 3.0 ms (3.11x) |
+| 12 | 133 ms (1.46x) | 57 ms (1.17x) | 2.0 ms (4.56x) |
+
+Only deposition scales well — it is compute-bound — but it is 4 % of the run.
+This is not threading overhead: the `omp` and `workqueue` layers give identical
+curves (1.83x / 1.80x at two threads, 1.47x / 1.43x at twelve).
+
+### Amdahl does the rest
+
+Only about 64 % of a large run is parallel at all. The copy-back is plain NumPy
+(~30 % of a step) and the xy rejection sampling is a Python loop (~8 % of the
+run); neither is threaded. Combined with the bandwidth ceiling above:
+
+| threads | full electrode (536^2 x 210) | speed-up | paired ratio, 2.4 M-voxel grid |
+|---|---|---|---|
+| 1 | 843.2 s (14.05 min) | 1.00x | 1.00x |
+| **2** | **646.1 s (10.77 min)** | **1.30x** | **1.30x** |
+| 12 | 685.3 s (11.42 min) | 1.23x | 1.22x |
+
+**Two threads beats twelve**, and the two independent measurements agree to
+0.01x on a grid 25x apart in size. The 2- and 12-thread full-electrode runs
+were themselves paired back-to-back, so their 6 % difference is drift-free.
+`k_s = 1.111065` at every thread count -- threading changes nothing physically.
+
+### Measuring this on a laptop
+
+Absolute timings drift by ~30 % with thermal state — enough to swamp the effect
+and even to invert it. A naive sequential sweep on the full electrode produced
+*994 s at 4 threads and 1033 s at 2*, both apparently slower than one thread,
+purely because they ran after twelve minutes of sustained full load.
+
+Use a **paired design**: alternate the two conditions back-to-back so any drift
+slower than one pair cancels, and compare ratios rather than absolute times.
+Once settled, repeat timings are stable to under 1 %, and the paired ratios
+above are reproducible to ±0.02.
+
+### The right way to spend many cores: replicas
+
+Since one run gains little from threads, the way to use a large machine is
+**many independent single-threaded runs** — different seeds, or a sweep over
+dose rate, energy and voltage — via `multiprocessing.Pool` or a Slurm job
+array. Measured on a 192-core node: 64 concurrent single-threaded replicas
+finished in 69 s against ~1600 s sequentially, a ~23x aggregate speed-up for
+64x the statistics. The shortfall from a theoretical 64x is memory-bandwidth
+and L3 contention plus concurrent JIT compilation; `--exclusive` single-core
+Slurm jobs avoid most of it.
+
+Note that all the numbers above are from one laptop-class chip with a single
+memory controller. A server part with eight controllers has far more bandwidth
+headroom, and the same run should scale considerably better there — the
+*shape* of the argument transfers, the numbers do not.
 
 ### Slurm / cpuset caveat
 
