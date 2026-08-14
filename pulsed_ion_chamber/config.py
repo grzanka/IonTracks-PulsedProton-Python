@@ -24,6 +24,7 @@ from pulsed_ion_chamber.constants import (
     ION_MOBILITY_CM2_VS,
     W_EV_PER_ION_PAIR,
 )
+from pulsed_ion_chamber.resources import check_memory_budget, format_bytes
 from pulsed_ion_chamber.stopping_power import (
     E_MeV_u_to_LET_keV_um,
     calc_track_radius_cm,
@@ -96,6 +97,11 @@ class SimulationConfig:
     buffer_radius: int = 4
     no_z_electrode: int = 3
     max_voxels: float = 1e8
+    # Fraction of *available* RAM this run may occupy. The carrier arrays alone
+    # scale as no_xy^2 * no_z_with_buffer, so a wide column is gigabytes; this
+    # turns "silently swap, then get OOM-killed twenty minutes in" into an
+    # immediate error. None disables the check. See resources.py.
+    memory_budget_fraction: Optional[float] = 0.8
 
     # --- gas / carrier physics (None = use the module-level constants) ---
     # Leaving all four of these None reproduces the original IonTracks-Cython
@@ -322,6 +328,43 @@ class SimulationConfig:
             1, int(round(fluence_rate_inst_cm2_s * self.pulse_duration_s * self.area_cm2))
         )
 
+        self._estimate_and_check_memory()
+
+    def _estimate_and_check_memory(self):
+        """Size the run's peak allocation and refuse it if it will not fit.
+
+        Three contributions matter; everything else is noise:
+
+        1. Four float64 carrier arrays (current and next, positive and
+           negative) of no_xy^2 * no_z_with_buffer voxels. Dominant for any
+           large grid, and live for the whole run.
+        2. The arrival-time draw in pulses.build_track_schedule, which holds
+           two float64 arrays of number_of_tracks_per_pulse. Transient, but it
+           peaks *before* the solver arrays are touched, so it does not simply
+           add -- at 2.5e7 tracks it is still ~400 MB.
+        3. The 2D density scratch used by the batched backend, no_xy^2, plus
+           its per-step Gaussian factors. Negligible beside the other two.
+        """
+        voxels = self.no_xy**2 * self.no_z_with_buffer
+        self.carrier_array_bytes = 4 * voxels * 8
+        self.track_schedule_bytes = 2 * self.number_of_tracks_per_pulse * 8
+        self.scratch_bytes = self.no_xy**2 * 8
+        # The schedule is freed before the run proper, so peak is whichever
+        # phase is larger rather than the sum.
+        self.estimated_memory_bytes = max(
+            self.track_schedule_bytes,
+            self.carrier_array_bytes + self.scratch_bytes,
+        )
+        check_memory_budget(
+            self.estimated_memory_bytes,
+            self.memory_budget_fraction,
+            what=(
+                f"A {self.no_xy}x{self.no_xy}x{self.no_z_with_buffer} grid with "
+                f"{self.number_of_tracks_per_pulse:,} tracks/pulse"
+            ),
+            hint="Coarsen grid_size_um or reduce sampled_radius_cm to shrink it.",
+        )
+
     def _resolve_carrier_constants(self):
         """Fill in per-species transport constants, defaulting to the single
         averaged pair the original IonTracks-Cython solvers use for both."""
@@ -417,7 +460,7 @@ class SimulationConfig:
             f"Lateral boundary      : {self.lateral_boundary}, scoring over {self.scoring_region}\n"
             f"Deposition stencil    : {cutoff_note}\n"
             f"Grid                  : {self.no_xy} x {self.no_xy} x {self.no_z_with_buffer} voxels "
-            f"({self.unit_length_cm * 1e4:.3g} um/voxel)\n"
+            f"({self.unit_length_cm * 1e4:.3g} um/voxel), {format_bytes(self.estimated_memory_bytes)} peak\n"
             f"Time step dt          : {self.dt:.3e} s\n"
             f"Separation time       : {self.separation_time_steps} steps "
             f"({self.separation_time_steps * self.dt * 1e6:.3g} us)\n"

@@ -1,7 +1,8 @@
 # Physics and numerics of `pulsed_ion_chamber`
 
 What this code simulates, what it assumes at every step, and why each
-assumption is defensible. Execution time is covered separately in
+assumption is defensible. How it is implemented is covered in
+[ALGORITHM.md](ALGORITHM.md), and what it costs in
 [PERFORMANCE.md](PERFORMANCE.md).
 
 Every quantity below is a field of `SimulationConfig` unless stated otherwise.
@@ -254,6 +255,13 @@ knob to tighten first if the track core is suspected.
 `buffer_radius` is numerical margin, not physics: it keeps the boundary
 condition (§10) away from the scored region. With a reflecting wall it converges
 at 3 voxels; with an absorbing wall it needs 4–6.
+
+**Size guard.** The carrier arrays are `4 · no_xy² · no_z_with_buffer · 8` bytes
+and grow as the square of the column radius, so a millimetre-scale column is
+gigabytes. `SimulationConfig` estimates the peak footprint and refuses to build
+a config exceeding `memory_budget_fraction` (default 0.8) of available RAM —
+the alternative is finding out from the OOM killer part-way through a long run.
+Set it to `None` to opt out.
 
 ---
 

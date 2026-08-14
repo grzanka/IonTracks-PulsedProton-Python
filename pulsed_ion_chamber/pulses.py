@@ -33,10 +33,13 @@ def build_track_schedule(config, rng: np.random.Generator) -> np.ndarray:
 
 def _sample_pulse_arrival_histogram(config, rng: np.random.Generator) -> np.ndarray:
     n_tracks = config.number_of_tracks_per_pulse
-    randomized = rng.random(n_tracks)
-    summed = np.cumsum(randomized)
-    distributed_times = summed / summed[-1] * config.pulse_duration_s
-    counts, _ = np.histogram(distributed_times, config.pulse_time_bins)
+    summed = np.cumsum(rng.random(n_tracks))
+    # Rescaled in place: at tens of millions of tracks each full-size float64
+    # temporary is hundreds of megabytes, and this runs before the carrier
+    # arrays are allocated, so it sets the run's peak footprint.
+    summed /= summed[-1]
+    summed *= config.pulse_duration_s
+    counts, _ = np.histogram(summed, config.pulse_time_bins)
     return counts.astype(np.int64)
 
 

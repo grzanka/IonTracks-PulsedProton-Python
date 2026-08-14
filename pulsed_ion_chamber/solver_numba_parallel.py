@@ -69,6 +69,7 @@ from numba import prange
 from pulsed_ion_chamber.config import SimulationConfig
 from pulsed_ion_chamber.constants import RECOMBINATION_ALPHA_CM3_S
 from pulsed_ion_chamber.pulses import build_track_schedule, sample_xy_inside_cylinder
+from pulsed_ion_chamber.resources import clamp_thread_count
 from pulsed_ion_chamber.solver import Result, apply_lateral_boundary
 
 FloatArray3D = npt.NDArray[np.float64]
@@ -292,7 +293,9 @@ def run_simulation_numba_parallel(
     target machine was well under 190.
     """
     if num_threads is not None:
-        numba.set_num_threads(num_threads)
+        # Clamped to the process CPU affinity mask and Numba's own maximum, so
+        # an over-ambitious request warns and degrades instead of raising.
+        numba.set_num_threads(clamp_thread_count(num_threads))
 
     rng = rng if rng is not None else np.random.default_rng(config.seed)
     schedule = build_track_schedule(config, rng)

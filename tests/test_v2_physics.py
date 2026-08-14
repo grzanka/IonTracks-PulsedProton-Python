@@ -240,3 +240,58 @@ def test_backends_agree_for_any_cutoff(cutoff):
     assert run_simulation_numba_parallel(config, progress=False, num_threads=1).ks == pytest.approx(
         reference.ks, rel=1e-9
     )
+
+
+# --- resource guards --------------------------------------------------------
+
+
+def test_memory_estimate_matches_the_arrays_that_get_allocated():
+    config = SimulationConfig(**SMALL)
+    voxels = config.no_xy**2 * config.no_z_with_buffer
+    # four float64 carrier arrays: current and next, positive and negative
+    assert config.carrier_array_bytes == 4 * voxels * 8
+    assert config.track_schedule_bytes == 2 * config.number_of_tracks_per_pulse * 8
+    # the schedule is freed before the carrier arrays are touched, so the peak
+    # is whichever phase is larger, not the sum
+    assert config.estimated_memory_bytes == max(
+        config.track_schedule_bytes, config.carrier_array_bytes + config.scratch_bytes
+    )
+
+
+def test_oversized_grid_is_refused_before_it_can_be_allocated():
+    with pytest.raises(MemoryError, match="available"):
+        SimulationConfig(
+            **{**SMALL, "grid_size_um": 10.0, "sampled_radius_cm": 2.0},
+            max_voxels=1e14,
+        )
+
+
+def test_memory_check_can_be_disabled():
+    config = SimulationConfig(
+        **{**SMALL, "grid_size_um": 10.0, "sampled_radius_cm": 2.0},
+        max_voxels=1e14,
+        memory_budget_fraction=None,
+    )
+    assert config.estimated_memory_bytes > 0
+
+
+def test_thread_request_is_clamped_to_what_the_process_can_use():
+    from pulsed_ion_chamber.resources import available_cores, clamp_thread_count
+
+    cores = available_cores()
+    assert cores >= 1
+    assert clamp_thread_count(1) == 1
+    with pytest.warns(UserWarning, match="exceeds"):
+        assert clamp_thread_count(100_000) <= cores
+    with pytest.raises(ValueError, match="num_threads"):
+        clamp_thread_count(0)
+
+
+def test_resource_probes_are_self_consistent():
+    from pulsed_ion_chamber.resources import available_memory_bytes, total_memory_bytes
+
+    available, total = available_memory_bytes(), total_memory_bytes()
+    # Either may be None on a platform that does not report it; if both are
+    # known, available cannot exceed total.
+    if available is not None and total is not None:
+        assert 0 < available <= total

@@ -246,10 +246,13 @@ print(result.f_t)     # collection efficiency vs. time
 | `rf_frequency_hz` | Optional: the accelerator's RF (e.g. a cyclotron's ~10-100 MHz extraction RF), purely diagnostic -- see below |
 | `seed` | RNG seed for track positions/arrival times |
 
-**Full documentation:** [`docs/PHYSICS.md`](docs/PHYSICS.md) describes every
-physical and numerical assumption and why it is made;
-[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) covers the cost model, measured
-timings and scaling.
+**Full documentation:**
+[`docs/PHYSICS.md`](docs/PHYSICS.md) — every physical and numerical assumption
+and why it is made.
+[`docs/ALGORITHM.md`](docs/ALGORITHM.md) — data layout, the two hot loops, what
+batching means, and where the parallelism is.
+[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — cost model, measured timings,
+scaling, and many-core guidance.
 
 ### Are protons injected all at once, and where does the accelerator's RF fit in?
 
@@ -285,9 +288,11 @@ see `tests/test_grid_and_timing.py` for both cases.
 ```
 docs/
   PHYSICS.md          Every physical/numerical assumption, and its justification
+  ALGORITHM.md        Data layout, the hot loops, batching, parallelism
   PERFORMANCE.md      Cost model, measured timings, scaling, many-core guidance
 pulsed_ion_chamber/
   constants.py       Kanai (1998) air ion-transport constants
+  resources.py       Host RAM/core discovery and the guards built on them
   stopping_power.py  LET lookup (PSTAR/libamtrack data), track-radius fit, dose-rate -> fluence-rate
   theory.py           Jaffe theory (single track) and Boag theory (uniform density) analytic references
   config.py           SimulationConfig: physical inputs + derived grid/timing quantities

@@ -1,7 +1,8 @@
 # Execution time
 
 Cost model, measured timings and scaling for `pulsed_ion_chamber`. The physics
-these numbers correspond to is described in [PHYSICS.md](PHYSICS.md).
+these numbers correspond to is described in [PHYSICS.md](PHYSICS.md), and the
+implementation they measure in [ALGORITHM.md](ALGORITHM.md).
 
 All timings are single-threaded on one development machine (`solver_numba` or
 `solver_numba_parallel` with `num_threads=1`), excluding one-off JIT
@@ -184,6 +185,10 @@ sequentially — a ~23× aggregate speed-up for 64× the statistics. The shortfa
 from a theoretical 64× is memory-bandwidth and L3 contention plus concurrent JIT
 compilation; a Slurm job array of `--exclusive` single-core jobs avoids most of
 it.
+
+`run_simulation_numba_parallel(num_threads=...)` clamps the request to the
+process's CPU affinity mask and to Numba's configured maximum, warning when it
+does, so a benchmark cannot report a thread count that never existed.
 
 ### Slurm / cpuset caveat
 
