@@ -271,15 +271,88 @@ dt and see how far k_s moves.
 |---|---|---|
 | track direction | always exactly ‖ z | azimuth and tilt ~ N(0, 0.01 rad); RDD is distance to a **3D line** |
 | LET | one deterministic value for all tracks | per-track, from per-track energy ~ N(56.2, 0.1) MeV |
-| track radius b | one deterministic value | per-track, ~ N(20, 0.1) µm |
+| track radius b | one deterministic value | **also one deterministic value** — see below |
 | arrival times | normalised cumulative sum of uniforms (ordered, spans the window exactly, fixed total) | i.i.d. uniform over the window |
 | transverse positions | rejection sampling, areal-uniform | inverse-CDF radial sampling, areal-uniform |
 
 The tilt spread is 0.01 rad, so the path-length effect is ~5e-5 — negligible
 in magnitude, but it means v2's tracks are genuinely 3D lines while v1's are a
 z-independent 2D cross-section, which is what lets v1 hoist the whole z-loop
-out of track insertion. The distributional differences (per-track LET/b,
+out of track insertion. The distributional differences (per-track LET,
 arrival-time construction) are negligible at N ≈ 5e4.
+
+**The archived config's `beam_radius_distribution` is dead.** It reads
+`{type: normal, mu: 20, sigma: 0.1}`, but `sample_energy_let_radius` only
+samples it on the branch where no `particle_energy_distribution` is given;
+this campaign supplies one, so the branch taken is *"use default `E_MeV_u`, and
+`radius` is taken from RDD default radius"*. Confirmed in the run's own
+`ion_tracks.csv`: all 54 239 tracks carry `radius = 20.0` exactly, min = max,
+while `LET` does vary per track (1.19756e-3 … 1.19894e-3, mean 1.199477e-3).
+So b is a single constant in both codes after all, and the `sigma: 0.1` in the
+config never took effect.
+
+### 4.8b How v2 actually deposits a track, and how much of it is negligible
+
+`IonTrackSource.inject()` → `_evaluate_batch_gaussian()`
+(`iontracks/tracks/ion_track_source.py`). Per time step:
+
+1. Select the tracks whose arrival time falls in `[t, t+dt)`.
+2. Take **every DOF coordinate on the rank**, `V.tabulate_dof_coordinates()`,
+   as a `(3, n_dofs)` array — cached once.
+3. Loop over the step's tracks. For each, compute the squared perpendicular
+   distance to the track *line* (`|p-p0|² - ((p-p0)·u)²`, so oblique incidence
+   is supported), then `np.exp(-r²/b²) * N0/(π b²)` over the whole DOF array
+   and `result += …`.
+4. Add `result` straight into the carrier's DOF array, and measure the injected
+   charge as `assemble_scalar(form(n * dx))`.
+
+The result is cached per time step and reused for the second carrier, so the
+RDD is evaluated once per step, not twice.
+
+**There is no cutoff anywhere in that path.** Every DOF gets an `np.exp` for
+every track, however far away. For the archived mesh (r = 0.12 mm, h = 2 mm,
+`lc = 0.01 mm` → 72 165 DOF, 366 002 tets) and b = 20 µm, so **b/lc = 2 nodes
+per Gaussian radius**:
+
+| within | exp(−k²) | DOF, centred track | DOF, mean over the 54 239 real track positions | share of mesh |
+|---|---|---|---|---|
+| 1b | 3.68e-1 | 2 005 | 2 005 | 2.8 % |
+| 2b | 1.83e-2 | 8 018 | 8 011 | 11.1 % |
+| 3b | 1.23e-4 | 18 041 | 17 330 | 24.0 % |
+| 4b | 1.13e-7 | 32 073 | 28 466 | 39.4 % |
+| 5b | 1.39e-11 | 50 115 | 40 091 | 55.6 % |
+| whole mesh | — | 72 165 | 72 165 | 100 % |
+
+So **~75 % of the mesh receives less than 1.2e-4 of a track's peak density, and
+~89 % less than 1.8e-2.** The smallest exponent actually evaluated is
+exp(−36) = 2.3e-16 (centred track to the wall), and for a track at the edge of
+the sampling disc the far wall is 10.2b away: **exp(−104) = 6.6e-46**. Those
+contributions are below float64 epsilon relative to the running sum — they
+cannot change it, and are computed anyway. Over the run that is
+54 239 × 72 165 = **3.9e9 `exp()` evaluations**.
+
+**v1 / this repo does the same thing far more cheaply**, not by truncating but
+by factorising. Because its tracks are exactly ‖ z, the 2D cross-section is
+z-independent and the 2D Gaussian is separable, so `_insert_track_numba`
+computes `2 × no_xy = 44` exponentials per track and reconstructs the rest with
+multiplications — **1 640× fewer transcendentals per track** than v2's 72 165,
+on the same physical domain at the same resolution. The subsequent broadcast
+still touches the whole gap (96 800 voxels), so the *element* counts are
+comparable; it is only the `exp()` count that differs, and it differs enormously.
+
+Neither code truncates, and at this domain size that costs relatively little —
+the domain is only 6b in radius, so there is at most a ~4× saving available.
+The waste becomes catastrophic only when the domain grows: see §7.1, where a
+±5b stencil covers 0.139 % of the full-electrode grid.
+
+**Accuracy of the deposit.** b/lc = 2 puts only ~10 nodes inside the 1/e radius
+in each transverse plane, which is coarse, and the campaign ran with
+`renormalize_to_let: false`, so nothing corrects the interpolated charge back to
+the LET. Measured from the run's own output: summing `injected_positive` over
+all 953 steps gives 3.9314e6 against an analytic
+`N0 × 2 mm × 54 239 = 3.9429e6`, i.e. **0.29 % low**. That deficit is P1
+interpolation error plus the Gaussian tails that fall outside the domain — small
+enough not to matter, and worth knowing rather than assuming.
 
 ### 4.9 Where the 20 µm track radius comes from
 
