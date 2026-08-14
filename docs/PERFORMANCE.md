@@ -143,10 +143,12 @@ been run on both machines, not estimated:
 
 | | laptop, 1 core | Ares, 1 core | Helios, 1 core | Ares, 24 cores | Helios, 32 cores |
 |---|---|---|---|---|---|
-| wall time | 768 s¹ | 968 s | 572 s | 105 s | **47 s** |
+| wall time | **562 s**¹ | 968 s | 572 s | 105 s | **47 s** |
 | `k_s` | 1.111065 | 1.111065 | 1.111065 | 1.111065 | 1.111065 |
 
-¹ before the optimisations of HELIOS.md §6; not re-measured since.
+¹ after the optimisations of HELIOS.md §6 (copy-back → buffer swap, batched xy
+sampling); before them it was 768 s. The laptop core is the fastest single
+core of the three, edging out Helios by 10 s.
 
 At this size the run is PDE-bound and memory-bandwidth-bound — the arrays are
 far larger than any cache and each voxel-step touches ~20 doubles. That is the

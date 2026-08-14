@@ -51,6 +51,24 @@ to the electrodes, traversing the gap as a straight line at constant LET.
 Default `E_MeV_u=150.0`, `particle="proton"`; the AIC-144 example uses
 56.2 MeV protons.
 
+**No angular distribution is modelled — every track is exactly normal to the
+electrodes.** A track is a single `(x, y)` position, drawn uniformly over the
+scored disc by `CylinderSampler` (`pulsed_ion_chamber/pulses.py`, §5, §7), and
+nothing else; there is no incidence angle, no beam divergence and no
+multiple-Coulomb-scattering deflection anywhere in `SimulationConfig` or the
+solvers. This isn't a simplification applied on top of a more general model —
+it is structural: `_insert_track_numba` (`solver_numba.py`) and its batched
+counterpart in `solver_numba_parallel.py` write the *same* 2D Gaussian
+cross-section, unchanged, into every one of the `no_z` gap layers (identity 1
+in the `solver_numba.py` module docstring). A tilted or divergent track would
+need a different `(x, y)` per `z`-layer, which the deposit kernels have no path
+to compute. Tilting the model would cost real time (§7 of PERFORMANCE.md
+credits exactly this identity with removing a factor of `no_z` from the
+transcendental count) — but at these energies the physical case for doing so is
+also weak: over a 2 mm gap, multiple Coulomb scattering deflects a
+tens-of-MeV proton by well under a degree, negligible next to the
+20 µm-radius Gaussian core the track is deposited into.
+
 LET comes from tabulated PSTAR data for **dry air**
 (`data/stopping_power_air.csv`, interpolated in energy). At 56.2 MeV this gives
 **1.1995 eV/µm** (1.1994844e-3 keV/µm in the units the table is stored in).
