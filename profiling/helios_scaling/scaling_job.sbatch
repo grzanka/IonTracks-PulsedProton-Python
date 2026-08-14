@@ -8,15 +8,23 @@
 #
 # Passed in via --export:
 #   THREADS    thread count for this job (also the job's --cpus-per-task)
-#   DOSE_RATES space-separated dose rates to water, Gy/s
+#   DOSE_RATES space-separated dose rates to water, Gy/s (normally one)
 #   OUTDIR     where the per-run JSON goes
 #   REPO       repository root
+#
+# Account, partition, cores, memory, walltime and log path all come from the
+# sbatch command line in submit_all.sh, so that the resource request and the
+# estimates it is derived from sit next to each other in one file. The
+# directives below are defaults, in case this is ever submitted by hand.
 #
 #SBATCH --job-name=ks-scaling
 #SBATCH --account=plgccbmc15-cpu
 #SBATCH --partition=plgrid
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=8G
+#SBATCH --time=00:30:00
 #SBATCH --output=%x-%j.out
 
 set -uo pipefail
@@ -34,7 +42,7 @@ mkdir -p "$OUTDIR"
 # Verifying it costs nothing and turns "the speed-up curve is flat" from a
 # mystery into an assertion failure.
 AFFINITY=$(python -c "import os; print(len(os.sched_getaffinity(0)))")
-echo "host=$(hostname)  job=${SLURM_JOB_ID}  cpus-per-task=${SLURM_CPUS_PER_TASK}  affinity=${AFFINITY}  threads=${THREADS}"
+echo "host=$(hostname)  job=${SLURM_JOB_ID}  cpus-per-task=${SLURM_CPUS_PER_TASK}  affinity=${AFFINITY}  threads=${THREADS}  mem=${SLURM_MEM_PER_NODE:-?}M"
 if [ "$AFFINITY" -lt "$THREADS" ]; then
   echo "FATAL: only ${AFFINITY} CPUs visible but ${THREADS} threads requested." >&2
   exit 1

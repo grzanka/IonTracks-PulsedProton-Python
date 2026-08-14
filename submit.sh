@@ -3,19 +3,21 @@
 #
 #     ./submit.sh
 #
-# That is the whole interface. It checks the environment, submits one job per
-# thread count (1, 2, 4, 8, 16, 32, 64, 128) at two dose rates (10 and
-# 50 Gy/s to water) on the full-electrode grid, and prints the two commands you
-# need afterwards: one to watch the queue, one to read the results.
+# That is the whole interface. It checks the environment, submits 16 independent
+# jobs -- one per (thread count, dose rate) over 1..128 threads and 10/50 Gy/s
+# to water on the full-electrode grid -- and prints the two commands you need
+# afterwards: one to watch the queue, one to read the results.
 #
-# Nothing computes here -- the jobs do. Expect the whole study to occupy the
-# queue for well under an hour of node time, most of it in the 1- and 2-thread
-# jobs (one core cannot be hurried).
+# Nothing computes here; the jobs do. They are independent, so on an empty queue
+# they run concurrently and the study is done in ~15 minutes -- the length of
+# its longest single run, which is the 1-thread 50 Gy/s case at ~13 min.
 #
 # Options, all optional:
 #   ./submit.sh --threads "1 8 64"    only these thread counts
 #   ./submit.sh --rates "50"          only this dose rate (Gy/s to water)
-#   ./submit.sh --dry-run             print the sbatch commands, submit nothing
+#   ./submit.sh --account plgXXX-cpu  charge a different grant (default plgccbmc15-cpu)
+#   ./submit.sh --mem 16G             memory per job (default 8G; ~2.1 GiB is used)
+#   ./submit.sh --dry-run             print what would be submitted, submit nothing
 #
 # Results land in profiling/data/helios_scaling/ as one JSON per run, with
 # job logs under logs/. See docs/HELIOS.md for what the numbers mean.
@@ -25,14 +27,21 @@ REPO="$(cd "$(dirname "$0")" && pwd)"
 
 THREAD_COUNTS="1 2 4 8 16 32 64 128"
 DOSE_RATES="50 10"
+ACCOUNT="${ACCOUNT:-plgccbmc15-cpu}"
+# Per job, not per core. The plgrid partition hands out DefMemPerCPU=1536 MB, so
+# a 1-core job would otherwise get 1.5 GB against a measured peak of ~2.1 GiB
+# and be OOM-killed -- the grid does not shrink when the thread count does.
+MEM="${MEM:-8G}"
 DRY_RUN=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --threads) THREAD_COUNTS="$2"; shift 2 ;;
     --rates)   DOSE_RATES="$2";    shift 2 ;;
+    --account) ACCOUNT="$2";       shift 2 ;;
+    --mem)     MEM="$2";           shift 2 ;;
     --dry-run) DRY_RUN=1;          shift ;;
-    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -55,6 +64,8 @@ if [ "$DRY_RUN" = "1" ]; then
   echo "dry run -- nothing will be submitted"
   echo "threads : ${THREAD_COUNTS}"
   echo "rates   : ${DOSE_RATES} Gy/s to water"
+  echo "account : ${ACCOUNT}"
+  echo "memory  : ${MEM} per job"
   exit 0
 fi
 
@@ -66,4 +77,5 @@ fi
 
 # --- submit -----------------------------------------------------------------
 THREAD_COUNTS="${THREAD_COUNTS}" DOSE_RATES="${DOSE_RATES}" \
+ACCOUNT="${ACCOUNT}" MEM="${MEM}" \
   bash "${REPO}/profiling/helios_scaling/submit_all.sh"

@@ -17,7 +17,7 @@ calls.
 
 The `full_electrode` tier (536² × 210, 1.9 GiB of carrier arrays, 2194 steps) at
 **1, 2, 4, 8, 16, 32, 64 and 128 threads**, at **10 and 50 Gy/s to water** —
-16 runs. Always the batched backend, including at one thread: comparing thread
+16 runs, submitted as **16 independent jobs**. Always the batched backend, including at one thread: comparing thread
 counts means holding the backend fixed, and the unbatched one would take hours
 on this grid.
 
@@ -39,13 +39,26 @@ direct measurement of how much serial work is left in deposition.
 Results: `profiling/data/helios_scaling/threads{N}_dose{R}.json`, job logs in
 `logs/` beside them.
 
-## Why one job per thread count, and not a job array
+## Why 16 separate jobs
 
-A job array shares a single `--cpus-per-task` across every task, so a 1-thread
-run would sit inside a 128-core reservation, wasting 127 cores for twelve
-minutes and queueing far longer than it needs to. Separate submissions let each
-job ask for exactly what it uses; they queue independently and generally start
-sooner.
+**One per (thread count, dose rate).** The two dose rates share nothing but the
+grid dimensions, so pairing them in one job only serialises them. Split, the
+study's turnaround is its longest *single* run — ~13 min, the 1-thread 50 Gy/s
+case — instead of its longest *pair*, ~23 min. On an empty queue all 16 run at
+once and the whole thing is done in a quarter of an hour.
+
+**Not a job array.** An array shares a single `--cpus-per-task` across every
+task, so the 1-thread runs would sit inside a 128-core reservation, wasting
+127 cores and queueing far longer than they need to. Separate submissions each
+ask for exactly what they use.
+
+## Why `--mem` is explicit
+
+The plgrid partition has `DefMemPerCPU=1536 MB` — memory is rationed per *core*.
+This study's peak RSS is ~2.1 GiB at **every** thread count, because it is one
+grid rather than one grid per thread. So the default would give the 1-core job
+1.5 GB and get it OOM-killed, and the 2-core job a 1.4× margin. Each job asks
+for 8 GB, which is free at these sizes and removes the question.
 
 ## Why the affinity assertion
 
@@ -60,11 +73,15 @@ the requested thread count and dies immediately if they disagree, and
 ## Adjusting it
 
 ```bash
-./submit.sh --threads "1 8 64"   # subset of thread counts
-./submit.sh --rates "50"         # one dose rate
-./submit.sh --dry-run            # print what would be submitted
+./submit.sh --threads "1 8 64"       # subset of thread counts
+./submit.sh --rates "50"             # one dose rate
+./submit.sh --account plgXXXX-cpu    # charge a different grant
+./submit.sh --mem 16G                # more memory per job
+./submit.sh --dry-run                # print what would be submitted
 ```
 
-The walltimes in `submit_all.sh` are ~2× the measured run times. If you change
-the tier, the grid spacing or the dose rates, re-derive them — too short kills a
-run at 97 %, too long only delays scheduling.
+The walltimes in `submit_all.sh` are ~2× the measured run times: 30 min for the
+single-core jobs, 20 for two cores, and the partition's 15-minute default for
+everything else. If you change the tier, the grid spacing or the dose rates,
+re-derive them — too short kills a run at 97 %, too long only delays
+scheduling.

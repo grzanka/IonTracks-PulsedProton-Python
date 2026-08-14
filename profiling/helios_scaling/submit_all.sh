@@ -2,75 +2,99 @@
 # Submit the Helios thread-scaling study: the full-electrode grid at 1, 2, 4, 8,
 # 16, 32, 64 and 128 threads, at two dose rates (10 and 50 Gy/s to water).
 #
-# Run it from a Helios access node -- it only submits, it does not compute:
+# Called by ../../submit.sh; that is the interface. Run this directly only to
+# override something submit.sh does not expose.
 #
-#     bash profiling/helios_scaling/submit_all.sh
-#     squeue -u $USER
-#     python profiling/helios_scaling/collect.py     # once the queue drains
+# ---------------------------------------------------------------------------
+# One job per (thread count, dose rate) -- 16 independent jobs
+# ---------------------------------------------------------------------------
+# The two dose rates share nothing but the grid dimensions, so running them in
+# one job only serialises them. Split, the whole study's turnaround is the
+# longest *single* run (~13 min, the 1-thread 50 Gy/s case) rather than the
+# longest *pair* (~23 min), and every job fits inside a 15-minute slot except
+# the two single-core ones.
 #
-# One job per thread count, each requesting exactly the cores it uses. Not a
-# job array, because an array shares one --cpus-per-task across all its tasks,
-# and asking for 128 cores to run a 1-thread job would waste 127 of them for
-# twelve minutes and queue far longer than it needs to.
+# Not a job array, either: an array shares one --cpus-per-task across all its
+# tasks, so the 1-thread runs would sit inside a 128-core reservation, wasting
+# 127 cores and queueing far longer than they need to. Separate submissions each
+# ask for exactly what they use.
 #
-# WALLTIMES are ~2x the measured run time, which is the right margin here: too
-# short kills a run at 97 %, and too long only delays scheduling. The estimates
-# come from the measured 10 Gy/s curve in docs/HELIOS.md plus the ~5x track
-# count at 50 Gy/s; adjust if the grid or the tier changes.
+# ---------------------------------------------------------------------------
+# Memory must be explicit
+# ---------------------------------------------------------------------------
+# Helios's plgrid partition has DefMemPerCPU=1536 MB, i.e. memory is handed out
+# *per core*. This study's peak RSS is ~2.1 GiB regardless of thread count -- it
+# is one grid, not one grid per thread -- so a 1-core job would default to
+# 1.5 GB and be OOM-killed, and a 2-core job would run on a 1.4x margin. The
+# --mem below is per job and generous; it costs nothing at these sizes.
 
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 OUTDIR="${REPO}/profiling/data/helios_scaling"
 LOGDIR="${OUTDIR}/logs"
+
+ACCOUNT="${ACCOUNT:-plgccbmc15-cpu}"
+PARTITION="${PARTITION:-plgrid}"
+MEM="${MEM:-8G}"                      # vs ~2.1 GiB measured peak RSS
 DOSE_RATES="${DOSE_RATES:-50 10}"
+THREAD_COUNTS="${THREAD_COUNTS:-1 2 4 8 16 32 64 128}"
 
 mkdir -p "$LOGDIR"
 
-# threads : walltime. Both dose rates run inside one job, so the walltime
-# covers both, plus ~1 min of JIT warm-up and interpreter start.
+# Walltime per job, ~2x the measured run time. Only the single-core jobs need
+# more than the partition's 15-minute default, and they need it because one core
+# cannot be made faster by rearranging the work.
 #
-#   threads     est. 50 Gy/s   est. 10 Gy/s   sum      walltime
-#      1           ~12 min        ~11 min     ~23 min   0:50
-#      2            ~7             ~6         ~13       0:35
-#      4            ~4.5           ~4          ~9       0:25
-#      8            ~5             ~4.5        ~10      0:25
-#     16            ~3.7           ~3          ~7       0:20
-#     32            ~2.5           ~2.3        ~5       0:15
-#     64            ~1.9           ~1.5        ~3.5     0:15
-#    128            ~1.7           ~1.4        ~3       0:15
-#
-# Only the 1- and 2-thread jobs exceed the ~15 min per job target, and they do
-# so because one core cannot be made faster by splitting the work differently.
-declare -A WALLTIME=(
-  [1]="00:50:00"
-  [2]="00:35:00"
-  [4]="00:25:00"
-  [8]="00:25:00"
-  [16]="00:20:00"
-  [32]="00:15:00"
-  [64]="00:15:00"
-  [128]="00:15:00"
-)
+#   threads   50 Gy/s   10 Gy/s        (measured where available, else scaled
+#      1       ~13 min   ~11 min        from the 10 Gy/s curve in HELIOS.md)
+#      2        ~7        ~6
+#      4        ~4.5      ~4
+#      8        ~5        ~4.5
+#     16        ~3.7      ~3
+#     32        ~2.5      ~2.3
+#     64         1.9       1.5
+#    128         1.5       1.0
+walltime_for() {
+  case "$1" in
+    1) echo "00:30:00" ;;
+    2) echo "00:20:00" ;;
+    *) echo "00:15:00" ;;
+  esac
+}
 
-THREAD_COUNTS="${THREAD_COUNTS:-1 2 4 8 16 32 64 128}"
-
-echo "repo    : ${REPO}"
-echo "results : ${OUTDIR}"
-echo "rates   : ${DOSE_RATES} Gy/s to water"
+echo "repo      : ${REPO}"
+echo "results   : ${OUTDIR}"
+echo "account   : ${ACCOUNT}"
+echo "partition : ${PARTITION}"
+echo "memory    : ${MEM} per job (peak RSS measured at ~2.1 GiB)"
+echo "threads   : ${THREAD_COUNTS}"
+echo "rates     : ${DOSE_RATES} Gy/s to water"
 echo
 
+submitted=0
 for n in $THREAD_COUNTS; do
-  walltime="${WALLTIME[$n]:-00:60:00}"
-  jobid=$(sbatch --parsable \
-    --job-name="ks-n${n}" \
-    --cpus-per-task="${n}" \
-    --time="${walltime}" \
-    --output="${LOGDIR}/ks-n${n}-%j.out" \
-    --export=ALL,THREADS="${n}",DOSE_RATES="${DOSE_RATES}",OUTDIR="${OUTDIR}",REPO="${REPO}" \
-    "${REPO}/profiling/helios_scaling/scaling_job.sbatch")
-  echo "submitted ${jobid}  threads=${n}  cpus=${n}  walltime=${walltime}"
+  walltime="$(walltime_for "$n")"
+  for rate in $DOSE_RATES; do
+    jobid=$(sbatch --parsable \
+      --job-name="ks-n${n}-d${rate}" \
+      --account="${ACCOUNT}" \
+      --partition="${PARTITION}" \
+      --nodes=1 \
+      --ntasks=1 \
+      --cpus-per-task="${n}" \
+      --mem="${MEM}" \
+      --time="${walltime}" \
+      --output="${LOGDIR}/ks-n${n}-d${rate}-%j.out" \
+      --export=ALL,THREADS="${n}",DOSE_RATES="${rate}",OUTDIR="${OUTDIR}",REPO="${REPO}" \
+      "${REPO}/profiling/helios_scaling/scaling_job.sbatch")
+    echo "submitted ${jobid}  threads=${n}  dose=${rate} Gy/s  cpus=${n}  mem=${MEM}  walltime=${walltime}"
+    submitted=$((submitted + 1))
+  done
 done
 
+echo
+echo "${submitted} jobs submitted. If the queue is empty they run concurrently,"
+echo "so expect results in ~15 minutes rather than ${submitted} x 15."
 echo
 echo "watch:    squeue -u \$USER"
 echo "collect:  python ${REPO}/profiling/helios_scaling/collect.py"
