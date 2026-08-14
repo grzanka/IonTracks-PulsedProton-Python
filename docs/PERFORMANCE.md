@@ -141,10 +141,10 @@ The Classic Markus PTW 23343 collecting electrode is 5.3 mm across (r = 2.65 mm,
 grid: 60.3 M voxels, 1.9 GiB of carrier arrays, 24.6 M tracks per pulse. It has
 been run on both machines, not estimated:
 
-| | laptop, 1 core | Helios, 1 core | Helios, 32 cores |
-|---|---|---|---|
-| wall time | 768 s¹ | 572 s | **47 s** |
-| `k_s` | 1.111065 | 1.111065 | 1.111065 |
+| | laptop, 1 core | Ares, 1 core | Helios, 1 core | Ares, 24 cores | Helios, 32 cores |
+|---|---|---|---|---|---|
+| wall time | 768 s¹ | 968 s | 572 s | 105 s | **47 s** |
+| `k_s` | 1.111065 | 1.111065 | 1.111065 | 1.111065 | 1.111065 |
 
 ¹ before the optimisations of HELIOS.md §6; not re-measured since.
 
@@ -152,9 +152,13 @@ At this size the run is PDE-bound and memory-bandwidth-bound — the arrays are
 far larger than any cache and each voxel-step touches ~20 doubles. That is the
 regime where threads genuinely help, and the only one.
 
+`k_s` is identical on every machine at every thread count, which is the check
+that makes the wall-time row worth comparing at all.
+
 Details: [BENCHMARKS-LAPTOP.md](BENCHMARKS-LAPTOP.md) §3 for the single-core
 phase breakdown and the memory accounting, [HELIOS.md](HELIOS.md) for the thread
-scaling and what had to change to get it.
+scaling and what had to change to get it, [BENCHMARKS-ARES.md](BENCHMARKS-ARES.md)
+for why the older Xeon loses by 1.7× per core despite the higher clock.
 
 **Is it worth running?** As a way to get an accurate `k_s`, no — an 80 µm column
 plus the `1/r` edge correction lands closer to the infinite-column limit, far

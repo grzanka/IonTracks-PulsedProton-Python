@@ -189,6 +189,18 @@ The physics moves much further than the cost: `k_s` goes from 1.1111 to 1.4464 �
 the dose rate, three times the loss, which is the superlinearity expected of a
 recombination term in `n₊n₋`. See PHYSICS.md.
 
+### How this compares to Ares
+
+The same study on Cyfronet Ares (2 × Xeon 8268, 48 cores, ~200 GB/s) came out
+slower on both axes — 968 s on one core against 572 s, and 105 s at its best
+against 47 s. The per-core gap is a flat 1.7–1.9× from one thread upward, so it
+is the core and not the scaling. [BENCHMARKS-ARES.md](BENCHMARKS-ARES.md) §6 has
+the numbers and a testable hypothesis (AVX-512 frequency licensing on Cascade
+Lake) for why an ostensibly faster-clocked core loses.
+
+Worth stating because the prediction went the other way: Helios is not just
+wider here, it is also quicker per core on this kernel.
+
 ## 6. What one core costs
 
 572 s for the full electrode at 10 Gy/s, 713 s at 50 Gy/s, and **2.0 s for the

@@ -1,13 +1,8 @@
 # Benchmarks: Ares (Cyfronet)
 
-> **Placeholder.** The hardware description and the setup instructions below are
-> real and verified on the machine; **every results table is empty and marked
-> TODO**, because the study has not been run here yet. Run `./submit.sh` on an Ares access node and fill them
-> in from `python profiling/cluster_scaling/collect.py profiling/data/ares_scaling`.
->
-> The predictions in §5 were written *before* any measurement. Leave them as
-> they are when you fill in the numbers, and record whether they held: a
-> prediction edited after the fact is worth nothing.
+**Measured.** 14 runs, one exclusive node each, `./submit.sh`. The predictions
+in §5 were written before any of it and are left exactly as they were; §6.3
+scores them, and **the headline one was wrong** — see §6.
 
 Companion pages: [HELIOS.md](HELIOS.md) (the same study on a much wider node)
 and [BENCHMARKS-LAPTOP.md](BENCHMARKS-LAPTOP.md). The machine-independent cost
@@ -157,33 +152,132 @@ before the controllers saturate. So:
 
 ## 6. Results
 
-**TODO — not yet measured.**
+Full-electrode grid (536² × 210, 1.9 GiB, 2194 steps), 14 exclusive-node jobs.
+`k_s` is `1.111065` at 10 Gy/s and `1.446434` at 50 Gy/s in **every** run, so
+the machine and the thread count change nothing about the answer.
 
 ### 6.1 Thread scaling
 
 | threads | 10 Gy/s | speed-up | eff. | 50 Gy/s | speed-up | eff. |
 |---|---|---|---|---|---|---|
-| 1 | | | | | | |
-| 2 | | | | | | |
-| 4 | | | | | | |
-| 8 | | | | | | |
-| 12 (1 NUMA domain) | | | | | | |
-| 24 (1 socket) | | | | | | |
-| 48 (whole node) | | | | | | |
+| 1 | 968 s | 1.00× | 100 % | 1269 s | 1.00× | 100 % |
+| 2 | 501 s | 1.93× | 97 % | 693 s | 1.83× | 92 % |
+| 4 | 286 s | 3.39× | 85 % | 449 s | 2.83× | 71 % |
+| 8 | 168 s | 5.76× | 72 % | 287 s | 4.42× | 55 % |
+| 12 (1 NUMA domain) | 141 s | 6.89× | 57 % | 251 s | 5.05× | 42 % |
+| 24 (1 socket) | **105 s** | **9.19×** | 38 % | 212 s | 5.98× | 25 % |
+| 48 (whole node) | 129 s | 7.49× | 16 % | **201 s** | **6.30×** | 13 % |
 
-`k_s` must come out `1.111065` at 10 Gy/s and `1.446434` at 50 Gy/s, identical
-to six digits at every thread count, on every machine. `collect.py` checks it.
+**Using the whole node is worse than using half of it** at 10 Gy/s: 48 threads
+is 129 s against 24 threads' 105 s. The same shape as Helios past its optimum,
+arriving 4× earlier in core count. At 50 Gy/s 48 threads is marginally best, and
+only because that curve is still climbing out of its serial deposition floor.
 
-### 6.2 Three machines side by side
+Implied serial fractions from the plateaus: ~7 % at 10 Gy/s (ceiling ~14×,
+measured 9.2×, so bandwidth binds first) and ~14 % at 50 Gy/s (ceiling ~7×,
+measured 6.3×, essentially at it). Same division of blame as Helios.
 
-| | laptop | Ares | Helios |
+### 6.2 Three machines
+
+| | laptop¹ | Ares | Helios |
 |---|---|---|---|
-| cores used for best time | TODO | TODO | 32 |
-| best wall time, 10 Gy/s | TODO | TODO | 47 s |
-| single core, 10 Gy/s | TODO | TODO | 572 s |
-| best speed-up | TODO | TODO | 12.2× |
-| efficiency at that point | TODO | TODO | 38 % |
+| cores | 12 (2P + 8E + 2LP-E) | 48 | 192 |
+| single core, 10 Gy/s | (pending) | **968 s** | **572 s** |
+| best wall time, 10 Gy/s | (pending) | **105 s** | **47 s** |
+| cores at that point | (pending) | 24 | 32 |
+| best speed-up | (pending) | 9.19× | 12.23× |
+| efficiency there | (pending) | 38 % | 38 % |
+| node throughput, 8-thread jobs | (pending) | 6 × 5.76 = **35×** | 24 × 6.32 = **152×** |
+
+¹ `./bench_laptop.sh`, see [BENCHMARKS-LAPTOP.md](BENCHMARKS-LAPTOP.md).
+
+**Helios wins on both axes, and the per-core one is the surprise.** At matched
+thread counts an Ares core is **1.7–1.9× slower**:
+
+| threads | Ares | Helios | ratio |
+|---|---|---|---|
+| 1 | 968 s | 572 s | 1.69× |
+| 2 | 501 s | 299 s | 1.67× |
+| 4 | 286 s | 162 s | 1.76× |
+| 8 | 168 s | 91 s | 1.86× |
+
+A flat ~1.7× offset from one thread upward is not a scaling difference — it is
+the *core* being slower at this work, before parallelism enters.
 
 ### 6.3 Which predictions held
 
-**TODO** — one line per numbered prediction in §5, kept honest.
+| # | prediction | outcome |
+|---|---|---|
+| 1 | single core **faster** than Helios, 450–550 s | **wrong, and by a lot**: 968 s, 1.7× *slower* |
+| 2 | best speed-up 10–14× at 24–48 threads | **half right**: 9.19× — just below the range — but at 24 threads as expected |
+| 3 | ≈ Helios's best wall time on a quarter of the cores | **wrong**: 105 s against 47 s, 2.2× slower at its best |
+| 4 | curve bends at 12 and 24 | **untestable as run** — see the affinity note below |
+| 5 | first touch matters less than on Helios | **not tested** — needs `bench_kernels.py --init both` on Ares |
+| 6 | AVX-512 invisible behind the memory wall | **doubtful** — see the hypothesis below |
+
+The bandwidth-per-core model of §5 predicted the *shape* of the scaling curve
+tolerably (9.2× against a predicted 10–14×, saturating where predicted) and the
+*absolute speed* not at all. It had no term for single-core throughput, and that
+is where the entire 2.2× difference in best wall time comes from.
+
+### Why is an Ares core 1.7× slower? A hypothesis, not a finding
+
+Clock favours Ares on paper: 3.9 GHz observed against Helios's ~3.5. So
+something is taking it back, and the size of the gap is suggestive.
+
+**AVX-512 frequency licensing.** Skylake-SP and Cascade Lake drop core frequency
+when running sustained 512-bit code — for a Platinum 8268 the all-core AVX-512
+turbo is roughly 2.4 GHz against 3.9 for scalar work, a ratio of ~1.6× that
+lands close to the measured 1.7×. Zen 4 implements AVX-512 as double-pumped
+256-bit and takes no such licence penalty. LLVM will happily vectorise this
+7-point stencil to 512 bits on Cascade Lake, so the code may be buying vector
+width and paying for it in clock, on a kernel that is bandwidth-bound and cannot
+use the width.
+
+That would make prediction 6 wrong in an interesting direction: AVX-512 is not
+invisible, it is a *cost*.
+
+**How to test it**, cheaply and on one thread:
+
+```bash
+# force 256-bit vectors and re-run the single-core point
+NUMBA_CPU_FEATURES="+avx2,-avx512f,-avx512dq,-avx512cd,-avx512bw,-avx512vl" \
+  python examples/ifj_aic144/run_markus_2mm.py full_electrode \
+    --threads 1 --backend batched --dose-rate-water-Gy-s 10
+```
+
+If it comes out materially *faster* than 968 s, the licence penalty is real and
+the fix is to pin the vector width rather than to accept the machine as slow.
+If it does not move, the cause is elsewhere — DDR4-2933 against DDR5-4800, or
+Cascade Lake's mesh latency against Zen 4's prefetchers — and the honest
+conclusion is simply that this kernel suits the newer memory system.
+
+### The affinity caveat: `--exclusive` did not confine the cpuset
+
+Every job reported `affinity=48`, whatever its `--cpus-per-task`:
+
+```
+site=ares  host=ac0783  cpus-per-task=1   affinity=48  threads=1
+site=ares  host=ac0714  cpus-per-task=8   affinity=48  threads=8
+site=ares  host=ac0655  cpus-per-task=24  affinity=48  threads=24
+```
+
+With `--exclusive` the batch script inherits the whole node's cpuset, so the
+thread *count* was enforced by `numba.set_num_threads` but the *placement* was
+not. Every run's threads were free to migrate across all 48 CPUs and all four
+NUMA domains.
+
+Two consequences, and neither invalidates the table:
+
+* The low-thread points are, if anything, **flattered** — 8 threads had four
+  domains' worth of memory controllers available rather than one domain's. So
+  the per-core deficit against Helios in §6.2 is a *lower bound*.
+* Prediction 4 could not be tested. Bends at 12 and 24 would only appear if
+  those thread counts were confined to a domain and a socket, and they were not.
+  The curve is smooth, which is what free placement predicts.
+
+Testing prediction 4 needs explicit pinning — `taskset` against CPU lists built
+from `numactl -H`, the same approach `profiling/laptop_scaling/topology.py`
+takes for the laptop's P and E cores. That is the obvious next run here, and it
+is the measurement that would say whether Sub-NUMA Clustering helps this code
+or merely complicates it.

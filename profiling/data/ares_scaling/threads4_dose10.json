@@ -1,0 +1,19 @@
+{
+  "tier": "full_electrode",
+  "sampled_radius_cm": 0.265,
+  "threads": 4,
+  "dose_rate_water_Gy_s": 10.0,
+  "dose_rate_air_Gy_s": 8.91,
+  "affinity_cpus": 48,
+  "slurm_job_id": "20911172",
+  "hostname": "ac0409",
+  "backend": "solver_numba_parallel",
+  "wall_s": 285.78961440594867,
+  "f": 0.9000373222386707,
+  "ks": 1.1110650361839343,
+  "ks_corrected": 1.11163560222167,
+  "no_xy": 536,
+  "no_z_with_buffer": 210,
+  "total_time_steps": 2194,
+  "tracks_per_pulse": 24630400
+}

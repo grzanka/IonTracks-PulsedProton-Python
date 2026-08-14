@@ -62,7 +62,7 @@ Index: [`docs/README.md`](docs/README.md) — what each document answers.
 | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | Cost model, measured timings, scaling, using many cores. |
 | [`docs/BENCHMARKS-LAPTOP.md`](docs/BENCHMARKS-LAPTOP.md) | Measured wall times on a laptop, and why one thread is the right number there. |
 | [`docs/HELIOS.md`](docs/HELIOS.md) | Running on a Cyfronet Helios node: setup, how many cores to ask for, what to expect. |
-| [`docs/BENCHMARKS-ARES.md`](docs/BENCHMARKS-ARES.md) | The same on Cyfronet Ares — hardware and predictions in place, results still to be measured. |
+| [`docs/BENCHMARKS-ARES.md`](docs/BENCHMARKS-ARES.md) | The same on Cyfronet Ares — and why its cores lose to Helios's by 1.7× despite a higher clock. |
 | [`pulsed_ion_chamber/README.md`](pulsed_ion_chamber/README.md) | What each module is for. |
 | [`examples/README.md`](examples/README.md) | What each example does. |
 | [`tests/README.md`](tests/README.md) | What each test file pins down. |
