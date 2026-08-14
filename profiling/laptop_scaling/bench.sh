@@ -46,10 +46,16 @@ energy_pref() {
 # Package temperature, in degrees C. Used only to report thermal state before a
 # run; if the machine is already hot the number that follows is a throttled one.
 package_temp_c() {
-  local hottest=0 t
+  local hottest=0 raw t
   for zone in /sys/class/thermal/thermal_zone*/temp; do
-    [ -r "$zone" ] || continue
-    t=$(( $(cat "$zone") / 1000 ))
+    # A zone can be present and readable and still fail the read: some ACPI and
+    # SoC-tile zones return ENODATA until something polls them, and a laptop has
+    # a dozen zones of which one or two routinely do. Guard on the *value*, not
+    # on -r, or the empty string reaches $(( )) and takes the whole script with
+    # it -- which is exactly what it did.
+    raw=$(cat "$zone" 2>/dev/null) || continue
+    case "$raw" in "" | *[!0-9-]*) continue ;; esac
+    t=$(( raw / 1000 ))
     [ "$t" -gt "$hottest" ] && hottest=$t
   done
   echo "$hottest"
@@ -62,6 +68,9 @@ mean_mhz() {
   local cpus="$1" total=0 count=0 khz
   for cpu in ${cpus//,/ }; do
     khz=$(cat "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_cur_freq" 2>/dev/null) || continue
+    # Same guard as package_temp_c: a successful read of an empty or non-numeric
+    # value is still not a number.
+    case "$khz" in "" | *[!0-9]*) continue ;; esac
     total=$((total + khz)); count=$((count + 1))
   done
   [ "$count" -gt 0 ] && echo $((total / count / 1000)) || echo 0
@@ -129,7 +138,7 @@ record.update({
     "ladder": "${ladder}",
     "pinned_cpus": "${cpus}",
     "core_composition": "${composition}",
-    "temp_before_c": ${temp_before},
+    "temp_before_c": ${temp_before:-0},
     "mean_mhz_during_run": ${mhz_mean:-0},
     "power_source": "$(power_state)",
     "governor": "$(governor)",
@@ -138,6 +147,10 @@ record.update({
 with open(path, "w") as handle:
     json.dump(record, handle, indent=2)
 EOF
+    # The patch is what carries the core composition and the sustained clock, so
+    # a silent failure here would leave a result that looks fine and cannot be
+    # interpreted. Say so loudly instead.
+    [ $? -eq 0 ] || echo "    WARNING: could not annotate ${outdir}/threads${threads}_dose${rate}.json" >&2
   else
     echo "    FAILED (exit ${status})" >&2
   fi

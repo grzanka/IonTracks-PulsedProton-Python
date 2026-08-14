@@ -303,13 +303,23 @@ def main() -> int:
               f"logical CPUs {group['logical_cpus']}")
     print()
     for ladder in ("perf", "econ", "smt"):
+        # Ask each ladder for everything it has rather than a fixed number: the
+        # smt ladder only ever holds the P cores' logical CPUs, so asking it for
+        # eight reported "not available" on a machine that plainly has SMT.
         try:
-            available = len(cpulist(topology, ladder, 1)) and cpulist(
-                topology, ladder, min(8, topology["n_physical"])
-            )
+            width = len(cpulist(topology, ladder, 1))
         except SystemExit:
-            available = None
-        print(f"  ladder {ladder:<5} -> {available if available else 'not available'}")
+            width = 0
+        if not width:
+            print(f"  ladder {ladder:<5} -> not available")
+            continue
+        for n in range(topology["n_logical"], 0, -1):
+            try:
+                available = cpulist(topology, ladder, n)
+                break
+            except SystemExit:
+                continue
+        print(f"  ladder {ladder:<5} -> {available}  ({describe(topology, available)})")
     return 0
 
 
