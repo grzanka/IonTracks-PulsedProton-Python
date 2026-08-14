@@ -3,7 +3,7 @@
 #
 #     ./bench_laptop.sh                 # everything, ~80 min
 #     ./bench_laptop.sh --stage topology   # what cores this machine has (instant)
-#     ./bench_laptop.sh --stage cores      # P-cores vs E-cores, small grid (~8 min)
+#     ./bench_laptop.sh --stage cores      # P vs E cores, DRAM-resident grid (~10 min)
 #     ./bench_laptop.sh --stage scaling    # the 1/2/4/8 ladder, full electrode (~70 min)
 #
 # It runs the same simulation as the Helios study -- the full-electrode grid at
@@ -38,7 +38,13 @@ cd "$REPO"
 
 STAGE="all"
 TIER="full_electrode"
-CORE_STUDY_TIER="wide"     # small enough to be quick; the P/E ratio is the point
+# The core-type study needs a grid on the *DRAM* side of the last-level cache,
+# or it measures clock and IPC rather than the memory behaviour this whole
+# investigation is about. Every named tier below full_electrode fits in a
+# laptop's ~12 MiB L3 (`wide` is 11.3 MiB), so the radius is set directly:
+# r = 0.09 cm is a 186^2 x 210 grid, 222 MiB of carrier arrays -- comfortably
+# DRAM-resident -- at 12 % of the full electrode's cost.
+CORE_STUDY_RADIUS_CM="0.09"
 DOSE_RATES="50 10"
 THREAD_COUNTS="1 2 4 8"
 COOLDOWN=60
@@ -98,7 +104,7 @@ if [ "$YES" != "1" ]; then
   case "$STAGE" in
     all)     estimate="~80 minutes" ;;
     scaling) estimate="~70 minutes" ;;
-    cores)   estimate="~8 minutes" ;;
+    cores)   estimate="~10 minutes" ;;
     *)       estimate="unknown" ;;
   esac
   echo "Stage '${STAGE}' will take ${estimate} and should have the machine to itself."
@@ -115,8 +121,8 @@ export REPO COOLDOWN
 # on a memory-bound kernel: clock helps, but both core types queue behind the
 # same memory controller.
 if [ "$STAGE" = "all" ] || [ "$STAGE" = "cores" ]; then
-  echo "=== core-type study: P vs E, '${CORE_STUDY_TIER}' grid ==="
-  TIER="$CORE_STUDY_TIER" \
+  echo "=== core-type study: P vs E, 186^2 x 210 grid (222 MiB, DRAM-resident) ==="
+  RADIUS="$CORE_STUDY_RADIUS_CM" \
   LADDERS="perf econ" \
   THREAD_COUNTS="1 2 4" \
   DOSE_RATES="50" \

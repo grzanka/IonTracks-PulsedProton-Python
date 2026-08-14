@@ -13,6 +13,7 @@ REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
 cd "$REPO"
 
 TIER="${TIER:-full_electrode}"
+RADIUS="${RADIUS:-}"                  # empty = use the tier's own radius
 DOSE_RATES="${DOSE_RATES:-50 10}"
 THREAD_COUNTS="${THREAD_COUNTS:-1 2 4 8}"
 LADDERS="${LADDERS:-perf}"
@@ -91,14 +92,21 @@ run_one() {
   ( while :; do mean_mhz "$cpus" >> "$mhz_log"; sleep 5; done ) &
   local watcher=$!
 
+  local radius_args=()
+  [ -n "$RADIUS" ] && radius_args=(--sampled-radius-cm "$RADIUS")
+
   local start; start=$(date +%s)
   taskset -c "$cpus" $PY -u examples/ifj_aic144/run_markus_2mm.py "$TIER" \
       --threads "$threads" \
       --backend batched \
       --dose-rate-water-Gy-s "$rate" \
+      "${radius_args[@]}" \
       --json "${outdir}/threads${threads}_dose${rate}.json" \
     2>&1 | grep -Ev "^  step " | tail -6
-  local status=${PIPESTATUS[0]} elapsed=$(( $(date +%s) - start ))
+  # Read PIPESTATUS on its own line: any command substitution on the same line
+  # would run first and there is no need to reason about whether it clobbers it.
+  local status=${PIPESTATUS[0]}
+  local elapsed=$(( $(date +%s) - start ))
 
   kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
 
@@ -145,7 +153,7 @@ EOF
 
 # --- go ---------------------------------------------------------------------
 
-echo "tier        : ${TIER}"
+echo "tier        : ${TIER}${RADIUS:+ (radius overridden to ${RADIUS} cm)}"
 echo "ladders     : ${LADDERS}"
 echo "threads     : ${THREAD_COUNTS}"
 echo "dose rates  : ${DOSE_RATES} Gy/s to water"

@@ -111,6 +111,7 @@ INFINITE_COLUMN_KS = 1.1119
 def build_config(
     tier: str = DEFAULT_TIER,
     dose_rate_water_Gy_s: float = DEFAULT_DOSE_RATE_WATER_GY_S,
+    sampled_radius_cm: float | None = None,
 ) -> SimulationConfig:
     """SimulationConfig for one grid tier of the Markus 2 mm macropulse case.
 
@@ -120,10 +121,18 @@ def build_config(
     with it linearly, recombination with roughly its square, and the PDE sweep
     not at all -- which makes it the cleanest way to move this problem from
     PDE-bound to deposition-bound. 50 Gy/s is the FLASH-adjacent case.
+
+    ``sampled_radius_cm`` overrides the tier's column radius. The tiers are a
+    ladder of *scientific* interest, and the sizes that fall between them can
+    matter for a different reason: what a benchmark needs is a grid on the
+    correct side of the machine's last-level cache, and on a laptop every named
+    tier below `full_electrode` fits in L3. Setting the radius directly is how
+    `bench_laptop.sh` gets a DRAM-resident grid that still costs minutes.
     """
     if tier not in GRID_TIERS:
         raise ValueError(f"Unknown tier {tier!r}; expected one of {sorted(GRID_TIERS)}.")
-    sampled_radius_cm, buffer_radius = GRID_TIERS[tier]
+    tier_radius_cm, buffer_radius = GRID_TIERS[tier]
+    sampled_radius_cm = tier_radius_cm if sampled_radius_cm is None else sampled_radius_cm
     return SimulationConfig(
         **BEAM_KWARGS,
         **CHAMBER_PHYSICS_KWARGS,
@@ -141,8 +150,9 @@ def main(
     json_path: str | None = None,
     backend: str = "auto",
     dose_rate_water_Gy_s: float = DEFAULT_DOSE_RATE_WATER_GY_S,
+    sampled_radius_cm: float | None = None,
 ) -> None:
-    config = build_config(tier, dose_rate_water_Gy_s)
+    config = build_config(tier, dose_rate_water_Gy_s, sampled_radius_cm)
     # "auto": one thread keeps the unbatched backend, so a plain run reproduces
     # the tier table; more than one needs the batched backend, the only one
     # where a thread count means anything.
@@ -194,6 +204,7 @@ def main(
             json.dump(
                 {
                     "tier": tier,
+                    "sampled_radius_cm": config.sampled_radius_cm,
                     "threads": threads,
                     "dose_rate_water_Gy_s": dose_rate_water_Gy_s,
                     "dose_rate_air_Gy_s": config.dose_rate_Gy_s,
@@ -230,6 +241,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--json", default=None, help="also write the result as JSON")
     parser.add_argument(
+        "--sampled-radius-cm",
+        type=float,
+        default=None,
+        help="override the tier's column radius (for sizing a grid against a cache)",
+    )
+    parser.add_argument(
         "--dose-rate-water-Gy-s",
         type=float,
         default=DEFAULT_DOSE_RATE_WATER_GY_S,
@@ -242,4 +259,11 @@ if __name__ == "__main__":
         help="auto (default) picks by thread count; force 'batched' for a single-core baseline",
     )
     args = parser.parse_args()
-    main(args.tier, args.threads, args.json, args.backend, args.dose_rate_water_Gy_s)
+    main(
+        args.tier,
+        args.threads,
+        args.json,
+        args.backend,
+        args.dose_rate_water_Gy_s,
+        args.sampled_radius_cm,
+    )

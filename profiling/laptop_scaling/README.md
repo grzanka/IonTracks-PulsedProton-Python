@@ -6,7 +6,7 @@ simulation, 1–8 threads, on a hybrid laptop CPU. Produces the tables in
 
 ```bash
 ./bench_laptop.sh --stage topology   # instant: what cores this machine has
-./bench_laptop.sh --stage cores      # ~8 min:  P-cores vs E-cores
+./bench_laptop.sh --stage cores      # ~10 min: P-cores vs E-cores
 ./bench_laptop.sh --stage scaling    # ~70 min: the 1/2/4/8 ladder
 ./bench_laptop.sh                    # all three
 
@@ -46,12 +46,19 @@ whose sustained clock moved by more than 15 %.
 | stage | grid | what it answers |
 |---|---|---|
 | `topology` | — | What core types does this machine have, and which CPUs are they? |
-| `cores` | `wide` (42²×210) | How much of the P-core advantage survives on a memory-bound kernel? Clock favours P, but both core types queue behind the same memory controller — so the gap should be smaller than the clock ratio. |
+| `cores` | 186²×210, r = 0.09 cm | How much of the P-core advantage survives on a memory-bound kernel? Clock favours P, but both core types queue behind the same memory controller — so the gap should be smaller than the clock ratio. |
 | `scaling` | `full_electrode` (536²×210) | The Helios comparison: same grid, same dose rates, 1/2/4/8 threads. |
 
-`cores` uses a small grid on purpose: it is a *ratio* between core types, and
-paying 12 minutes a point to measure a ratio is waste. `scaling` uses the full
-electrode because comparability with Helios is the entire point of it.
+`cores` uses a smaller grid on purpose — it is a *ratio* between core types, and
+paying 12 minutes a point to measure a ratio is waste — but **not one of the
+named tiers**. Every tier below `full_electrode` fits inside a laptop's ~12 MiB
+L3 (`wide` is 11.3 MiB), and on a cache-resident grid this study would compare
+clock and IPC rather than the memory behaviour the whole investigation is
+about. So it sets the column radius directly: r = 0.09 cm is 222 MiB of carrier
+arrays, comfortably DRAM-resident, at 12 % of the full electrode's cost.
+
+`scaling` uses the full electrode because comparability with Helios is the
+entire point of it.
 
 ## Ladders
 
