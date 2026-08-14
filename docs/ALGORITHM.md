@@ -280,21 +280,21 @@ avoids a second full pass over the grid every step.
 
 ---
 
-## 9. The three backends
+## 9. The two backends
 
 Same physics, same RNG stream, same answer to 1e-9 — enforced by
-`tests/test_v2_physics.py::test_backends_agree_on_the_ported_physics`.
+`tests/test_backends_agree.py`.
 
-| | `solver.py` | `solver_numba.py` | `solver_numba_parallel.py` |
-|---|---|---|---|
-| implementation | plain Python loops | `@njit`, single-threaded | `@njit(parallel=True)` |
-| loop order | `k` outermost (mirrors the reference implementation) | `k` innermost, matching memory layout | `k` innermost |
-| deposition | per track, separable, stencilled | per track, separable, stencilled | **batched** per step + row index |
-| purpose | readable reference | baseline | large grids / many tracks per step |
+| | `solver_numba.py` | `solver_numba_parallel.py` |
+|---|---|---|
+| threading | single-threaded `@njit` | `@njit(parallel=True)` |
+| deposition | one track at a time; each broadcast down the gap | **batched** per step: sum into 2D, broadcast once, with a row index |
+| extra state | none | 2D scratch array, per-step Gaussian factors, row index |
+| best when | few tracks per time step | dense pulses, large grids |
 
-`solver.py` is ~550× slower and exists to be read and to validate the others.
-
----
+Neither is "the reference" in a correctness sense — they check each other. The
+independent physics check is `tests/test_single_track_vs_jaffe.py`, which
+compares the single-track limit against analytic Jaffe theory.
 
 ## 10. Memory
 

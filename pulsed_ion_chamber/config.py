@@ -1,14 +1,19 @@
-"""Simulation configuration: physical inputs plus all derived grid/timing
-quantities needed by the PDE solver.
+"""Simulation configuration: physical inputs, and everything derived from them.
 
-The grid layout (sampled cylinder + electrode buffer) and the time-step
-search follow hadrons/cython_files/continuous_beam.pyx (and its pure-Python
-twin hadrons/python/continuous_beam.py) in the IonTracks-Cython repository.
-What's new here is the *pulse-train* timing: instead of spreading tracks
-uniformly over the whole simulated window (continuous beam), tracks are
-only injected during repeating pulse_duration_s windows spaced
-1/repetition_rate_hz apart (pulsed beam), followed by a clearance period
-long enough for ions to drift out of the gap.
+`SimulationConfig` is where a run is specified and where it is validated. Give
+it the beam, the chamber and the grid; it works out the LET, the track radius,
+the number of tracks, the stencil, the stable time step and the run length, and
+refuses configurations that cannot work -- a grid larger than available RAM, a
+time step past the stability limit, a sampling disc smaller than its own
+buffer. Better to fail in the constructor than twenty minutes into a run.
+
+Each field carries a comment explaining what it means and what changes if you
+move it; docs/PHYSICS.md gives the reasoning at length.
+
+The pulse-train timing is the piece that distinguishes this from a
+continuous-beam solver: tracks arrive only during repeating
+`pulse_duration_s` windows spaced `1/repetition_rate_hz` apart, followed by a
+clearance period long enough for the gas to empty.
 """
 
 import warnings

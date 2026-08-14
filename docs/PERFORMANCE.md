@@ -53,11 +53,10 @@ converged and enlarging the column is a bad way to chase the last percent. Apply
 the `1/r` correction of PHYSICS §14 instead: `archive` plus the correction beats
 `full_electrode` outright, in 1.8 s rather than 12.8 min.
 
-**Backends.** `solver.py` (pure Python reference) is ~550× slower and exists to
-be read, not run — the `archive` tier takes ~0.9 h there.
-`solver_numba.py` is the baseline. `solver_numba_parallel.py` adds per-step
-batching of track insertion and is the one to use for large grids; at
-`num_threads=1` it is otherwise equivalent.
+**Backends.** `solver_numba.py` deposits one track at a time and is the
+simpler baseline. `solver_numba_parallel.py` batches a whole step's deposition
+and is the one to use for dense pulses and large grids; at `num_threads=1` it
+is otherwise equivalent, and it is what the timings above use.
 
 ---
 

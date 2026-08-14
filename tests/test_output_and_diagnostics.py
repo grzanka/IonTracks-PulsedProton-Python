@@ -10,7 +10,6 @@ from pulsed_ion_chamber.output import (
     track_density_per_cm2,
     write_collected_charge_csv,
 )
-from pulsed_ion_chamber.solver import run_simulation
 from pulsed_ion_chamber.solver_numba import run_simulation_numba
 from pulsed_ion_chamber.solver_numba_parallel import run_simulation_numba_parallel
 
@@ -133,7 +132,7 @@ def test_csv_is_in_ion_pairs_not_densities(result):
     assert 0.3 < table["injected_positive"].sum() / analytic < 1.0
 
 
-@pytest.mark.parametrize("backend", [run_simulation, run_simulation_numba, run_simulation_numba_parallel])
+@pytest.mark.parametrize("backend", [run_simulation_numba, run_simulation_numba_parallel])
 def test_backends_agree_on_the_diagnostics(backend):
     config = SimulationConfig(**SMALL)
     reference = run_simulation_numba(config, progress=False)

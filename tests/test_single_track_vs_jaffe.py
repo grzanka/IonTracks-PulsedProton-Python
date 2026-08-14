@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from pulsed_ion_chamber.config import SimulationConfig
-from pulsed_ion_chamber.solver import run_simulation
+from pulsed_ion_chamber.solver_numba import run_simulation_numba
 from pulsed_ion_chamber.theory import jaffe_ks
 
 
@@ -31,7 +31,7 @@ def test_single_track_matches_jaffe_theory(seed):
     )
     assert config.number_of_tracks_per_pulse == 1
 
-    result = run_simulation(config, progress=False)
+    result = run_simulation_numba(config, progress=False)
     ks_jaffe = jaffe_ks(config.LET_keV_um, config.voltage_V, config.electrode_gap_cm)
 
     # Compare recombination *loss* (ks - 1) rather than ks itself, since
@@ -55,5 +55,5 @@ def test_f_t_is_monotonically_non_increasing():
         no_z_electrode=4,
         seed=1,
     )
-    result = run_simulation(config, progress=False)
+    result = run_simulation_numba(config, progress=False)
     assert np.all(np.diff(result.f_t) <= 1e-6)

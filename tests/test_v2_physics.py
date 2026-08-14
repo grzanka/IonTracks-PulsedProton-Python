@@ -1,8 +1,9 @@
-"""Tests for the physics ported from IonTracks-FEniCSx (v2).
+"""Every configurable physics option, and the resource guards.
 
-Two things are checked: that every new knob defaults to the original
-IonTracks-Cython (v1) behaviour, and that the new code paths are consistent
-between the pure-Python reference and the two Numba backends.
+Two things are checked throughout: that each option's *default* reproduces the
+original single-averaged-species behaviour, so an existing config cannot change
+answer by upgrading; and that each option's non-default path gives the same
+result in both backends.
 """
 
 import numpy as np
@@ -19,7 +20,6 @@ from pulsed_ion_chamber.constants import (
     ION_MOBILITY_POSITIVE_CM2_VS,
     W_EV_PER_ION_PAIR,
 )
-from pulsed_ion_chamber.solver import run_simulation
 from pulsed_ion_chamber.solver_numba import run_simulation_numba
 from pulsed_ion_chamber.solver_numba_parallel import run_simulation_numba_parallel
 
@@ -174,16 +174,12 @@ def test_reflecting_wall_leaves_no_frozen_charge_on_the_outer_ring():
     ],
 )
 def test_backends_agree_on_the_ported_physics(extra):
-    """Every new code path must give the same answer in the pure-Python
-    reference and both Numba backends (same seed, same RNG stream)."""
+    """Both backends must give the same answer on every new code path."""
     config = SimulationConfig(**SMALL, **extra)
-    reference = run_simulation(config, progress=False)
-    numba_result = run_simulation_numba(config, progress=False)
+    reference = run_simulation_numba(config, progress=False)
     parallel_result = run_simulation_numba_parallel(config, progress=False, num_threads=1)
 
-    assert numba_result.ks == pytest.approx(reference.ks, rel=1e-9)
     assert parallel_result.ks == pytest.approx(reference.ks, rel=1e-9)
-    np.testing.assert_allclose(numba_result.f_t, reference.f_t, rtol=1e-9)
     np.testing.assert_allclose(parallel_result.f_t, reference.f_t, rtol=1e-9)
 
 
@@ -235,8 +231,7 @@ def test_tight_cutoff_loses_the_predicted_charge():
 @pytest.mark.parametrize("cutoff", [None, 8.0, 3.0])
 def test_backends_agree_for_any_cutoff(cutoff):
     config = SimulationConfig(**SMALL, **TWO_SPECIES, track_cutoff_sigmas=cutoff)
-    reference = run_simulation(config, progress=False)
-    assert run_simulation_numba(config, progress=False).ks == pytest.approx(reference.ks, rel=1e-9)
+    reference = run_simulation_numba(config, progress=False)
     assert run_simulation_numba_parallel(config, progress=False, num_threads=1).ks == pytest.approx(
         reference.ks, rel=1e-9
     )

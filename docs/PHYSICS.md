@@ -523,9 +523,11 @@ small difference to a physics change.
   recombination. This is the strongest available independent check: it tests the
   track deposition, the transport and the recombination term together against a
   closed-form result derived under the same Gaussian-track assumption.
-- **`tests/test_solver_numba.py`, `test_solver_numba_parallel.py`,
-  `test_v2_physics.py`** — all three backends must agree to 1e-9 on every code
-  path, so an optimisation cannot silently change the physics.
+- **`tests/test_backends_agree.py`** — the two backends must agree to 1e-9 on
+  `f(t)`, `k_s`, the final density field and the tracks drawn. They differ in
+  loop structure, in parallelism and in when the z-broadcast happens, so this
+  is a genuine cross-implementation check and an optimisation cannot silently
+  change the physics.
 - **`theory.py`** also provides Boag theory for uniform charge density. It does
   *not* strictly apply to track-structured beams and is included only as a
   rough cross-check in the general-recombination regime.
