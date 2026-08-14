@@ -160,6 +160,16 @@ class SimulationConfig:
     # None disables truncation and deposits over the whole grid.
     track_cutoff_sigmas: Optional[float] = 10.0
 
+    # --- time step ---
+    # None takes the largest dt the explicit scheme is stable at (the von
+    # Neumann limit). A smaller value may be set for a convergence study, but
+    # note that Lax-Wendroff is *most* accurate for advection near Courant 1:
+    # its leading dispersive error scales as (1 - c^2), so reducing dt below
+    # the stability limit degrades the drift term while improving the
+    # diffusion and recombination splitting. A larger value is refused --
+    # the scheme would not merely lose accuracy, it would blow up.
+    dt_seconds: Optional[float] = None
+
     seed: Optional[int] = None
 
     def __post_init__(self):
@@ -229,11 +239,26 @@ class SimulationConfig:
         )
 
         # --- time step (von Neumann stability) and drift/pulse timing ---
-        self.dt = _von_neumann_dt(
+        self.von_neumann_dt = _von_neumann_dt(
             (self.D_positive, self.D_negative),
             self.unit_length_cm,
             (self.mu_positive, self.mu_negative),
             self.Efield_V_cm,
+        )
+        if self.dt_seconds is None:
+            self.dt = self.von_neumann_dt
+        elif self.dt_seconds > self.von_neumann_dt:
+            raise ValueError(
+                f"dt_seconds={self.dt_seconds:.4g} s exceeds the von Neumann stability "
+                f"limit of {self.von_neumann_dt:.4g} s for this grid and field; the "
+                "explicit scheme would diverge. Coarsen grid_size_um to allow a larger dt."
+            )
+        else:
+            self.dt = float(self.dt_seconds)
+        # Courant number of the fastest carrier: Lax-Wendroff's dispersive
+        # error scales as (1 - c^2) and vanishes at c = 1.
+        self.courant_number = (
+            max(self.mu_positive, self.mu_negative) * self.Efield_V_cm * self.dt / self.unit_length_cm
         )
 
         # Real proton beams (cyclotron or synchrocyclotron) arrive as a train
@@ -461,7 +486,8 @@ class SimulationConfig:
             f"Deposition stencil    : {cutoff_note}\n"
             f"Grid                  : {self.no_xy} x {self.no_xy} x {self.no_z_with_buffer} voxels "
             f"({self.unit_length_cm * 1e4:.3g} um/voxel), {format_bytes(self.estimated_memory_bytes)} peak\n"
-            f"Time step dt          : {self.dt:.3e} s\n"
+            f"Time step dt          : {self.dt * 1e9:.1f} ns (von Neumann limit "
+            f"{self.von_neumann_dt * 1e9:.1f} ns, Courant {self.courant_number:.3f})\n"
             f"Separation time       : {self.separation_time_steps} steps "
             f"({self.separation_time_steps * self.dt * 1e6:.3g} us)\n"
             f"Pulse                 : {self.pulse_duration_s * 1e6:.1f} us "

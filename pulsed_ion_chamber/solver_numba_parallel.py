@@ -70,7 +70,7 @@ from pulsed_ion_chamber.config import SimulationConfig
 from pulsed_ion_chamber.constants import RECOMBINATION_ALPHA_CM3_S
 from pulsed_ion_chamber.pulses import build_track_schedule, sample_xy_inside_cylinder
 from pulsed_ion_chamber.resources import clamp_thread_count
-from pulsed_ion_chamber.solver import Result, apply_lateral_boundary
+from pulsed_ion_chamber.solver import Result, _Diagnostics, apply_lateral_boundary
 
 FloatArray3D = npt.NDArray[np.float64]
 FloatArray1D = npt.NDArray[np.float64]
@@ -194,6 +194,8 @@ def _lax_wendroff_step_numba_parallel(
     scalars are the per-species stencil weights from
     config.scheme_coefficients()."""
     recombined = 0.0
+    total_positive = 0.0
+    total_negative = 0.0
     n_inner = no_xy - 2
     for idx in prange(n_inner * n_inner):
         i = 1 + idx // n_inner
@@ -225,13 +227,17 @@ def _lax_wendroff_step_numba_parallel(
             )
 
             recomb = alpha_dt * p * n
-            positive_next[i, j, k] = p_new - recomb
-            negative_next[i, j, k] = n_new - recomb
+            p_out = p_new - recomb
+            n_out = n_new - recomb
+            positive_next[i, j, k] = p_out
+            negative_next[i, j, k] = n_out
 
             if inside and no_z_electrode < k < (no_z + no_z_electrode):
                 recombined += recomb
+                total_positive += p_out
+                total_negative += n_out
 
-    return recombined
+    return recombined, total_positive, total_negative
 
 
 def _precompute_track_gaussians(xs: FloatArray1D, ys: FloatArray1D, no_xy: int, h2: float, b2: float, cutoff_voxels: float):
@@ -317,9 +323,11 @@ def run_simulation_numba_parallel(
     no_initialised = 0.0
     no_recombined = 0.0
     f_t: FloatArray1D = np.ones(config.total_time_steps)
+    diagnostics = _Diagnostics(config)
     report_every = max(1, config.total_time_steps // 20)
 
     for step in range(config.total_time_steps):
+        injected_this_step = 0.0
         n_tracks_this_step = schedule[step]
         if n_tracks_this_step > 0:
             xs = np.empty(n_tracks_this_step)
@@ -334,7 +342,8 @@ def run_simulation_numba_parallel(
             _accumulate_track_density_numba_parallel(
                 total_density, gauss_i, gauss_j, lo_i, lo_j, hi_j, offsets, track_ids, config.no_xy
             )
-            no_initialised += _broadcast_density_numba_parallel(
+            diagnostics.count_tracks(xs, ys)
+            injected_this_step = _broadcast_density_numba_parallel(
                 positive_array,
                 negative_array,
                 total_density,
@@ -346,7 +355,8 @@ def run_simulation_numba_parallel(
                 config.scoring_radius_sq,
             )
 
-        no_recombined += _lax_wendroff_step_numba_parallel(
+        no_initialised += injected_this_step
+        recombined, total_p, total_n = _lax_wendroff_step_numba_parallel(
             positive_array,
             negative_array,
             positive_next,
@@ -367,6 +377,8 @@ def run_simulation_numba_parallel(
             n_cen,
             alpha_dt,
         )
+        no_recombined += recombined
+        diagnostics.record(step, injected_this_step, recombined, total_p, total_n)
 
         positive_array[1:-1, 1:-1, 1:-1] = positive_next[1:-1, 1:-1, 1:-1]
         negative_array[1:-1, 1:-1, 1:-1] = negative_next[1:-1, 1:-1, 1:-1]
@@ -380,4 +392,4 @@ def run_simulation_numba_parallel(
 
     time_s: FloatArray1D = (np.arange(config.total_time_steps) + 1) * config.dt
     ks = 1.0 / f_t[-1]
-    return Result(config=config, time_s=time_s, f_t=f_t, ks=ks, positive_array=positive_array, negative_array=negative_array)
+    return diagnostics.build_result(config, time_s, f_t, ks, positive_array, negative_array)

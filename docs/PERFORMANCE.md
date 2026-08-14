@@ -88,11 +88,10 @@ The stencil is 28 voxels across, so it is *larger* than the grid on the
 the stencil and grows without bound thereafter. `k_s` is identical to all
 printed digits in every row.
 
-**Grid spacing** is the expensive one. Halving `grid_size_um` doubles `no_xy`
-and `no_z` (4× and 2× the volume) *and* halves `dt` through the von Neumann
-condition (2× the steps), so the PDE term goes as `h⁻⁴`. The insertion term
-goes as `h⁻²` (the stencil covers more voxels at fixed physical width). Expect
-roughly **8–16×** for one refinement level.
+**Grid spacing** is the expensive one. Halving `grid_size_um` quadruples the
+transverse grid, doubles the axial one, *and* halves `dt` through the von
+Neumann condition, so the PDE term goes as `h⁻⁴`. Measured on the `archive`
+tier: 0.93 s at 10 µm against 29.5 s at 5 µm, **32×** for one refinement level.
 
 **Dose rate** scales the insertion term linearly and leaves the PDE term
 untouched.

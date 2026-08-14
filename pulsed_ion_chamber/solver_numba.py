@@ -46,7 +46,7 @@ import numpy.typing as npt
 from pulsed_ion_chamber.config import SimulationConfig
 from pulsed_ion_chamber.constants import RECOMBINATION_ALPHA_CM3_S
 from pulsed_ion_chamber.pulses import build_track_schedule, sample_xy_inside_cylinder
-from pulsed_ion_chamber.solver import Result, apply_lateral_boundary
+from pulsed_ion_chamber.solver import Result, _Diagnostics, apply_lateral_boundary
 
 FloatArray3D = npt.NDArray[np.float64]
 FloatArray1D = npt.NDArray[np.float64]
@@ -132,8 +132,11 @@ def _lax_wendroff_step_numba(
     n_cen: float,
     alpha_dt: float,
 ) -> float:
-    """Advance both carrier densities by one time step and accumulate the
-    recombination that occurred inside the scored gap region.
+    """Advance both carrier densities by one time step, returning
+    (recombination, surviving positive, surviving negative) inside the scored
+    gap region. The carrier totals are accumulated here because the updated
+    densities are already in hand; a separate reduction would re-read the whole
+    grid for nothing.
 
     The p_*/n_* scalars are the per-species (lateral, z_minus, z_plus, centre)
     stencil weights from config.scheme_coefficients(); they are equal unless
@@ -143,6 +146,8 @@ def _lax_wendroff_step_numba(
     so it's evaluated once per (i, j) here rather than once per (i, j, k).
     """
     recombined = 0.0
+    total_positive = 0.0
+    total_negative = 0.0
     for i in range(1, no_xy - 1):
         di_sq = (i - mid_xy) ** 2
         for j in range(1, no_xy - 1):
@@ -174,13 +179,17 @@ def _lax_wendroff_step_numba(
                 )
 
                 recomb = alpha_dt * p * n
-                positive_next[i, j, k] = p_new - recomb
-                negative_next[i, j, k] = n_new - recomb
+                p_out = p_new - recomb
+                n_out = n_new - recomb
+                positive_next[i, j, k] = p_out
+                negative_next[i, j, k] = n_out
 
                 if inside and no_z_electrode < k < (no_z + no_z_electrode):
                     recombined += recomb
+                    total_positive += p_out
+                    total_negative += n_out
 
-    return recombined
+    return recombined, total_positive, total_negative
 
 
 def warmup() -> None:
@@ -224,12 +233,15 @@ def run_simulation_numba(
     no_initialised = 0.0
     no_recombined = 0.0
     f_t: FloatArray1D = np.ones(config.total_time_steps)
+    diagnostics = _Diagnostics(config)
     report_every = max(1, config.total_time_steps // 20)
 
     for step in range(config.total_time_steps):
+        injected_this_step = 0.0
         for _ in range(schedule[step]):
             x, y = sample_xy_inside_cylinder(rng, config.mid_xy, config.sampling_radius, config.no_xy)
-            no_initialised += _insert_track_numba(
+            diagnostics.count_track(x, y)
+            injected_this_step += _insert_track_numba(
                 positive_array,
                 negative_array,
                 x,
@@ -245,7 +257,8 @@ def run_simulation_numba(
                 config.track_cutoff_voxels,
             )
 
-        no_recombined += _lax_wendroff_step_numba(
+        no_initialised += injected_this_step
+        recombined, total_p, total_n = _lax_wendroff_step_numba(
             positive_array,
             negative_array,
             positive_next,
@@ -266,6 +279,8 @@ def run_simulation_numba(
             n_cen,
             alpha_dt,
         )
+        no_recombined += recombined
+        diagnostics.record(step, injected_this_step, recombined, total_p, total_n)
 
         positive_array[1:-1, 1:-1, 1:-1] = positive_next[1:-1, 1:-1, 1:-1]
         negative_array[1:-1, 1:-1, 1:-1] = negative_next[1:-1, 1:-1, 1:-1]
@@ -279,4 +294,4 @@ def run_simulation_numba(
 
     time_s: FloatArray1D = (np.arange(config.total_time_steps) + 1) * config.dt
     ks = 1.0 / f_t[-1]
-    return Result(config=config, time_s=time_s, f_t=f_t, ks=ks, positive_array=positive_array, negative_array=negative_array)
+    return diagnostics.build_result(config, time_s, f_t, ks, positive_array, negative_array)

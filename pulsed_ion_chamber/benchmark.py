@@ -114,7 +114,7 @@ def estimate_full_runtime(config, n_track_samples=10, n_step_samples=3, rng=None
     t0 = time.perf_counter()
     for _ in range(n_step_samples):
         step_once()
-    t_per_step = (time.perf_counter() - t0) / n_step_samples
+    t_per_step = (time.perf_counter() - t0) / n_step_samples  # step_once returns (recomb, n+, n-)
 
     total_tracks = config.number_of_tracks_per_pulse * config.n_pulses
     estimated_seconds = total_tracks * t_per_track + config.total_time_steps * t_per_step

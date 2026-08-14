@@ -49,6 +49,53 @@ def apply_lateral_boundary(array: np.ndarray, mode: str) -> None:
     array[:, -1, :] = array[:, -2, :]
 
 
+class _Diagnostics:
+    """Per-time-step bookkeeping shared by all three backends.
+
+    Kept out of the kernels so they stay numba-friendly, and so the three
+    backends cannot drift apart in what they record.
+    """
+
+    def __init__(self, config):
+        steps = config.total_time_steps
+        self.injected = np.zeros(steps)
+        self.recombined = np.zeros(steps)
+        self.n_positive = np.zeros(steps)
+        self.n_negative = np.zeros(steps)
+        self.track_density_xy = np.zeros((config.no_xy, config.no_xy))
+
+    def count_track(self, x: float, y: float) -> None:
+        self.track_density_xy[int(x), int(y)] += 1.0
+
+    def count_tracks(self, xs: np.ndarray, ys: np.ndarray) -> None:
+        np.add.at(self.track_density_xy, (xs.astype(np.int64), ys.astype(np.int64)), 1.0)
+
+    def record(self, step, injected, recombined, total_positive, total_negative) -> None:
+        self.injected[step] = injected
+        self.recombined[step] = recombined
+        self.n_positive[step] = total_positive
+        self.n_negative[step] = total_negative
+
+    def build_result(self, config, time_s, f_t, ks, positive_array, negative_array) -> "Result":
+        return Result(
+            config=config,
+            time_s=time_s,
+            f_t=f_t,
+            ks=ks,
+            positive_array=positive_array,
+            negative_array=negative_array,
+            n_positive=self.n_positive,
+            n_negative=self.n_negative,
+            # Each track liberates one positive and one negative carrier, so
+            # the two injection columns are equal by construction; both are
+            # kept so the output matches the reference CSV layout.
+            injected_positive=self.injected,
+            injected_negative=self.injected.copy(),
+            recombination=self.recombined,
+            track_density_xy=self.track_density_xy,
+        )
+
+
 def _stencil_bounds(centre: float, cutoff_voxels: float, no_xy: int) -> tuple[int, int]:
     """Half-open grid-index range [lo, hi) covered by a track's cutoff radius,
     clipped to the grid. Shared by all three backends so they truncate
@@ -66,6 +113,13 @@ class Result:
     ks: float  # recombination correction factor 1 / f_t[-1], after full clearance
     positive_array: np.ndarray  # final charge-carrier density snapshot [cm^-3]
     negative_array: np.ndarray
+    # --- per-time-step diagnostics, all summed over the scored region ---
+    n_positive: np.ndarray  # positive carriers present at the end of each step
+    n_negative: np.ndarray  # negative carriers present
+    injected_positive: np.ndarray  # carriers created during the step
+    injected_negative: np.ndarray
+    recombination: np.ndarray  # carrier pairs lost to recombination during the step
+    track_density_xy: np.ndarray  # (no_xy, no_xy) count of track centres per voxel
 
 
 def _insert_track(positive_array, negative_array, x, y, config) -> float:
@@ -100,8 +154,12 @@ def _insert_track(positive_array, negative_array, x, y, config) -> float:
 def _lax_wendroff_step(
     positive_array, negative_array, positive_next, negative_next, config, pos_weights, neg_weights
 ) -> float:
-    """Advance both carrier densities by one time step and accumulate the
-    recombination that occurred inside the scored gap region.
+    """Advance both carrier densities by one time step, returning the
+    recombination and the surviving carrier totals inside the scored gap region.
+
+    The carrier totals are accumulated here rather than reduced afterwards
+    because the updated densities are already in hand -- a separate pass would
+    re-read the whole grid for nothing.
 
     pos_weights/neg_weights are the per-species (lateral, z_minus, z_plus,
     centre) stencil weights from config.scheme_coefficients(); they are equal
@@ -113,6 +171,8 @@ def _lax_wendroff_step(
     p_lat, p_zm, p_zp, p_cen = pos_weights
     n_lat, n_zm, n_zp, n_cen = neg_weights
     recombined = 0.0
+    total_positive = 0.0
+    total_negative = 0.0
     alpha_dt = RECOMBINATION_ALPHA_CM3_S * config.dt
     mid = config.mid_xy
     scoring_radius_sq = config.scoring_radius_sq
@@ -154,8 +214,10 @@ def _lax_wendroff_step(
                     j - mid
                 ) ** 2 < scoring_radius_sq:
                     recombined += recomb
+                    total_positive += positive_next[i, j, k]
+                    total_negative += negative_next[i, j, k]
 
-    return recombined
+    return recombined, total_positive, total_negative
 
 
 def run_simulation(config: SimulationConfig, rng: Optional[np.random.Generator] = None, progress: bool = True) -> Result:
@@ -176,16 +238,22 @@ def run_simulation(config: SimulationConfig, rng: Optional[np.random.Generator] 
     no_initialised = 0.0
     no_recombined = 0.0
     f_t = np.ones(config.total_time_steps)
+    diagnostics = _Diagnostics(config)
     report_every = max(1, config.total_time_steps // 20)
 
     for step in range(config.total_time_steps):
+        injected_this_step = 0.0
         for _ in range(schedule[step]):
             x, y = sample_xy_inside_cylinder(rng, config.mid_xy, config.sampling_radius, config.no_xy)
-            no_initialised += _insert_track(positive_array, negative_array, x, y, config)
+            injected_this_step += _insert_track(positive_array, negative_array, x, y, config)
+            diagnostics.count_track(x, y)
+        no_initialised += injected_this_step
 
-        no_recombined += _lax_wendroff_step(
+        recombined, total_p, total_n = _lax_wendroff_step(
             positive_array, negative_array, positive_next, negative_next, config, pos_weights, neg_weights
         )
+        no_recombined += recombined
+        diagnostics.record(step, injected_this_step, recombined, total_p, total_n)
 
         positive_array[1:-1, 1:-1, 1:-1] = positive_next[1:-1, 1:-1, 1:-1]
         negative_array[1:-1, 1:-1, 1:-1] = negative_next[1:-1, 1:-1, 1:-1]
@@ -199,4 +267,4 @@ def run_simulation(config: SimulationConfig, rng: Optional[np.random.Generator] 
 
     time_s = (np.arange(config.total_time_steps) + 1) * config.dt
     ks = 1.0 / f_t[-1]
-    return Result(config=config, time_s=time_s, f_t=f_t, ks=ks, positive_array=positive_array, negative_array=negative_array)
+    return diagnostics.build_result(config, time_s, f_t, ks, positive_array, negative_array)

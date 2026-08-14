@@ -53,7 +53,7 @@ Default `E_MeV_u=150.0`, `particle="proton"`; the AIC-144 example uses
 
 LET comes from tabulated PSTAR data for **dry air**
 (`data/stopping_power_air.csv`, interpolated in energy). At 56.2 MeV this gives
-**1.1994844e-3 keV/µm**.
+**1.1995 eV/µm** (1.1994844e-3 keV/µm in the units the table is stored in).
 
 **Why.** A 56 MeV proton has a range in air of tens of metres, so it loses a
 negligible fraction of its energy crossing a 2 mm gap: LET is constant along the
@@ -82,7 +82,7 @@ n(r) = N₀/(π b²) · exp(−r²/b²)        N₀ = LET/W   [ion pairs per uni
 
 `b` is the **Gaussian track radius**, computed from a quadratic fit in
 log₁₀(LET) to the Rossomme et al. tabulation (`data/LET_b.dat`), floored at
-`2e-3 cm = 20 µm`. At the LETs relevant here the fit falls below the floor, so
+**20 µm**. At the LETs relevant here the fit falls below the floor, so
 **b = 20 µm**.
 
 **Note the parametrisation.** `exp(−r²/b²)` is a Gaussian of standard deviation
@@ -274,9 +274,9 @@ constants:
 |---|---|---|
 | µ₊ | 1.65 cm²/(V·s) | 1.36 cm²/(V·s) |
 | µ₋ | 1.65 cm²/(V·s) | 2.10 cm²/(V·s) |
-| D₊ | 3.7e-2 cm²/s | 2.82e-2 cm²/s |
-| D₋ | 3.7e-2 cm²/s | 4.35e-2 cm²/s |
-| α | 1.60e-6 cm³/s | same |
+| D₊ | 0.037 cm²/s | 0.0282 cm²/s |
+| D₋ | 0.037 cm²/s | 0.0435 cm²/s |
+| α | 1.60 × 10⁻⁶ cm³/s | same |
 | W | 34.2 eV/ion pair (`W_eV`) | — |
 
 **Single vs. two species.** By default both carriers share one averaged mobility
@@ -320,8 +320,8 @@ diffusion and drift along z,
 ```
 
 For the AIC-144 `archive` tier with two species this gives
-**dt = 3.043e-7 s**, set by the negative ion (both faster and more diffusive, so
-it binds); the averaged-species model gives 3.826e-7 s. This is why resolving
+**dt = 304.3 ns**, set by the negative ion (both faster and more diffusive, so
+it binds); the averaged-species model gives 382.6 ns. This is why resolving
 two species costs step count: `dt` drops 20 %, and the collection tail lengthens
 (§12).
 
@@ -502,9 +502,13 @@ boundary with tracks filling the whole periodic cell. That removes the rim
 entirely — every track then has a full complement of neighbours — so a small
 column would give `k_∞` directly with no extrapolation and no residual bias.
 
-**Track-core resolution.** 2 voxels per Gaussian radius (§7) is the other
-approximation worth quantifying; halving `grid_size_um` is the check, at 8–16×
-the cost.
+**Track-core resolution** is the next systematic down, and it is small.
+Halving `grid_size_um` at fixed column radius moves `k_s` by −0.11 % (10 µm →
+5 µm) and −0.27 % (20 µm → 10 µm), consistent with a second-order spatial
+error; Richardson extrapolation puts the discretisation error at the default
+10 µm at about **0.15 %**. It costs ~32× to check, since halving `h` quadruples
+the transverse grid, doubles the axial one and halves `dt` through the von
+Neumann condition.
 
 **Statistical noise.** Track positions and arrival times are random; `seed` fixes
 them. Repeat runs with different seeds to size the scatter before attributing a
