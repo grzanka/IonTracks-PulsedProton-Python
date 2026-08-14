@@ -16,6 +16,11 @@ same answer, so this refuses to print one until it has checked that:
   128, which looks exactly like "parallelism does not help";
 * the grid, step count and track count are what that dose rate implies.
 
+It also reads the laptop study's results (`./bench_laptop.sh`), which write the
+same JSON with extra fields, and checks the two conditions that quietly ruin a
+laptop measurement: running on battery, and thermal throttling part-way through
+a ladder. Both show up as a speed-up curve, not as an error.
+
 Usage:  python profiling/helios_scaling/collect.py [results_dir]
 """
 
@@ -53,9 +58,29 @@ def check(rows: list[dict]) -> list[str]:
                 f"{affinity} CPUs were visible -- this run was not what it says."
             )
 
+    for row in rows:
+        if row.get("power_source") == "BATTERY":
+            problems.append(
+                f"{row['_path']}: measured on battery -- clocks are capped, so this "
+                "describes the power profile as much as the code."
+            )
+
     by_rate = defaultdict(list)
     for row in rows:
         by_rate[row.get("dose_rate_water_Gy_s")].append(row)
+
+    # Thermal throttling on a laptop does not fail, it just makes later runs
+    # slower -- and since the ladder runs 1 thread first, that inflates every
+    # speed-up after it. Flag it rather than let it look like superlinear
+    # scaling.
+    for rate, group in by_rate.items():
+        clocks = [r["mean_mhz_during_run"] for r in group if r.get("mean_mhz_during_run")]
+        if len(clocks) > 1 and min(clocks) > 0 and (max(clocks) - min(clocks)) / max(clocks) > 0.15:
+            problems.append(
+                f"{rate} Gy/s: sustained clock varied {min(clocks)}-{max(clocks)} MHz across "
+                "the ladder (>15 %). Thermal throttling, so the speed-ups are against a "
+                "baseline measured on a cooler machine -- lengthen --cooldown and re-run."
+            )
 
     for rate, group in sorted(by_rate.items(), key=lambda kv: (kv[0] is None, kv[0])):
         reference = min(group, key=lambda r: r["threads"])
@@ -78,16 +103,27 @@ def check(rows: list[dict]) -> list[str]:
 def table(group: list[dict], title: str) -> None:
     group = sorted(group, key=lambda r: r["threads"])
     base = next((r["wall_s"] for r in group if r["threads"] == 1), None)
+    # Only the laptop study records these; on a uniform machine they would be
+    # the same in every row and just noise.
+    hybrid = any(r.get("core_composition") for r in group)
+
     print(f"\n{title}")
-    print(f"{'threads':>7} {'wall_s':>9} {'speed-up':>9} {'per-core':>9} {'ms/step':>9}  k_s")
+    header = f"{'threads':>7} {'wall_s':>9} {'speed-up':>9} {'per-core':>9} {'ms/step':>9}"
+    if hybrid:
+        header += f" {'cores':>10} {'MHz':>6}"
+    print(header + "  k_s")
+
     for row in group:
         speedup = base / row["wall_s"] if base else None
-        print(
+        line = (
             f"{row['threads']:>7} {row['wall_s']:>9.1f} "
             f"{(f'{speedup:.2f}x' if speedup else '-'):>9} "
             f"{(f'{speedup / row['threads']:.0%}' if speedup else '-'):>9} "
-            f"{row['wall_s'] / row['total_time_steps'] * 1e3:>9.1f}  {row['ks']:.6f}"
+            f"{row['wall_s'] / row['total_time_steps'] * 1e3:>9.1f}"
         )
+        if hybrid:
+            line += f" {row.get('core_composition', '?'):>10} {row.get('mean_mhz_during_run', 0):>6}"
+        print(line + f"  {row['ks']:.6f}")
 
 
 def compare(by_rate: dict) -> None:

@@ -53,6 +53,8 @@ print(result.ks)      # recombination correction factor
 
 ## Documentation
 
+Index: [`docs/README.md`](docs/README.md) — what each document answers.
+
 | | |
 |---|---|
 | [`docs/PHYSICS.md`](docs/PHYSICS.md) | Every physical and numerical assumption, and why it is made. **Start here** for what is modelled. |
@@ -64,6 +66,8 @@ print(result.ks)      # recombination correction factor
 | [`examples/README.md`](examples/README.md) | What each example does. |
 | [`tests/README.md`](tests/README.md) | What each test file pins down. |
 | [`profiling/README.md`](profiling/README.md) | Profiling harness and the raw data it produced. |
+| [`profiling/helios_scaling/README.md`](profiling/helios_scaling/README.md) | The Helios thread-scaling study — `./submit.sh`. |
+| [`profiling/laptop_scaling/README.md`](profiling/laptop_scaling/README.md) | The laptop scaling benchmark — `./bench_laptop.sh`. |
 
 Two results worth knowing before trusting a number:
 

@@ -1,5 +1,7 @@
 # Documentation
 
+[↑ repository README](../README.md)
+
 Five documents, split by the question they answer. Nothing about the history
 of the code lives here — only its current state.
 

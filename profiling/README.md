@@ -8,7 +8,26 @@
 > `bench_kernels.py` / `run_full_electrode_sweep.sh` below for the harness that
 > showed it. The Phase-1 material is kept as-is; it is the "before".
 
+## The two machine studies
+
+Both are self-contained and have their own README:
+
+| | |
+|---|---|
+| [`helios_scaling/`](helios_scaling/README.md) | Thread scaling on a Helios node, 1–128 cores, two dose rates. Submit with `./submit.sh` from an access node. |
+| [`laptop_scaling/`](laptop_scaling/README.md) | The same runs on a hybrid laptop CPU, 1–8 cores, pinned to known core types. Run with `./bench_laptop.sh`. |
+
+Their results are read by the same collector,
+[`helios_scaling/collect.py`](helios_scaling/collect.py), which checks a study
+for self-consistency before it will tabulate it.
+
 ## Phase 1: raw profiling & scientific-validation data
+
+The exercise this material was built for is specified in
+[`../TRAINING_PLAN.md`](../TRAINING_PLAN.md): Phase 1 diagnose, Phase 2
+optimise. Phase 2 has since been carried out — see the note above and
+[`../docs/HELIOS.md`](../docs/HELIOS.md) — so the plan now reads as a record of
+what was asked rather than of what is outstanding.
 
 This directory is training material: a set of scripts and the raw
 performance/correctness data they produced on a Cyfronet Helios node

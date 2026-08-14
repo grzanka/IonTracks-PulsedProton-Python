@@ -54,7 +54,10 @@ uniform and normal to the electrodes.
 | `full_electrode` | 0.265 (2.65 mm) | 536²×210 | 24 630 400 | 12.8 min¹ | 1.1111 | 1.1117 |
 
 ¹ single core on a laptop; 680 s on one Helios core. The same run takes 77 s
-on 96 Helios cores, with `k_s` identical to six digits — see [`docs/HELIOS.md`](../../docs/HELIOS.md).
+on 96 Helios cores, with `k_s` identical to six digits — see
+[`docs/HELIOS.md`](../../docs/HELIOS.md). The full-electrode run record, with
+its collected-charge curve, is archived in
+[`results/full_electrode/`](results/full_electrode/README.md).
 
 **No tier is converged in column radius.** A track at the rim of the sampled
 disc has neighbours on one side only, so `k_s` is biased low by a
