@@ -3,7 +3,7 @@
 > **Phase 2 happened.** The thread sweep below was run on a 40 MiB grid, and
 > concluded that threads never help. That is true for *that* grid and false in
 > general: on a grid larger than the node's 768 MiB of L3 the same code scales
-> ~10x, once NUMA first touch, a serial copy-back and a per-track Python loop
+> ~9x, once NUMA first touch, a serial copy-back and a per-track Python loop
 > are dealt with. See [`docs/HELIOS.md`](../docs/HELIOS.md), and
 > `bench_kernels.py` / `run_full_electrode_sweep.sh` below for the harness that
 > showed it. The Phase-1 material is kept as-is; it is the "before".

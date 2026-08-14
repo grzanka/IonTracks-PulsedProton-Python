@@ -6,10 +6,10 @@ algorithm [ALGORITHM.md](ALGORITHM.md), for the general cost model
 [PERFORMANCE.md](PERFORMANCE.md).
 
 **The one-line answer:** for the shortest wall time on one run, ask for
-**~96 cores** (full electrode: 680 s → 77 s). For the most science per
-core-hour, ask for **8 or 16** and spend the rest of the node on independent
-replicas (16 and 24 measure the same — one NUMA domain saturates at ~16 cores).
-Never ask for all 190: it is consistently slower than 96.
+**~128 cores** (full electrode: 593 s → 69 s, 8.6×). For the most science per
+core-hour, ask for **2–8** and spend the rest of the node on independent
+replicas: sixteen 8-thread jobs do 49x the work per hour that one 128-thread job
+does. Never ask for all 190 — it is consistently slower than 128.
 
 ---
 
@@ -69,52 +69,101 @@ of cores. Leave placement to Slurm and the kernel.
 
 ## 4. How many cores to ask for
 
-Measured, AIC-144 Markus 2 mm `full_electrode` tier (536² × 210 voxels,
-1.9 GiB of carrier arrays, 24.6 M tracks, 2194 steps), one whole run each:
+Measured, AIC-144 Markus 2 mm `full_electrode` tier (536² × 210 voxels, 1.9 GiB
+of carrier arrays, 2194 steps), at two dose rates. Sixteen runs, each its own
+Slurm job on its own node, reproducible with `./submit.sh`:
 
-| threads | wall | speed-up | per-core efficiency | ms/step | k_s |
-|---|---|---|---|---|---|
-| 1 | 680 s | 1× | 100 % | 310 | 1.111065 |
-| 8 | 258 s | 2.6× | 33 % | 118 | 1.111065 |
-| 16 | 183 s | 3.7× | 23 % | 84 | 1.111065 |
-| 24 | 175 s | 3.9× | 16 % | 80 | 1.111065 |
-| 48 | 97 s | 7.0× | 15 % | 44 | 1.111065 |
-| 96 | **77 s** | **8.9×** | 9 % | 35 | 1.111065 |
-| 190 | 124 s | 5.5× | 3 % | 56 | 1.111065 |
+| threads | 10 Gy/s | speed-up | eff. | 50 Gy/s | speed-up | eff. |
+|---|---|---|---|---|---|---|
+| 1 | 593 s | 1.00× | 100 % | 755 s | 1.00× | 100 % |
+| 2 | 351 s | 1.69× | 85 % | 399 s | 1.89× | 95 % |
+| 4 | 207 s | 2.87× | 72 % | 325 s | 2.32× | 58 % |
+| 8 | 195 s | 3.05× | 38 % | 370 s | 2.04× | 25 % |
+| 16 | 169 s | 3.51× | 22 % | 256 s | 2.95× | 18 % |
+| 32 | 131 s | 4.54× | 14 % | 177 s | 4.27× | 13 % |
+| 64 | 78 s | 7.56× | 12 % | 139 s | 5.41× | 8 % |
+| 128 | **69 s** | **8.63×** | 7 % | **97 s** | **7.80×** | 6 % |
 
-`k_s` is identical to six digits at every thread count — the thread count
-changes the order of one float reduction and nothing else. That is the check
-that makes the rest of the table worth reading.
+`k_s` is `1.111065` in all eight 10 Gy/s runs and `1.446434` in all eight at
+50 Gy/s — identical to six digits, at every thread count. The thread count
+changes the order of one float reduction and nothing else, and `collect.py`
+will not print this table until it has checked that. It is what makes the rest
+of it worth reading.
 
 Four things to read off it.
 
-**The steps in the curve are the memory hierarchy, not the core count.** 8
-threads is one CCD and its 32 MiB L3 slice; 16 and 24 both sit inside one NUMA
-domain and measure the *same* (183 s vs 175 s, inside the noise) because they
-share the same three memory channels and 16 cores already saturate them; 48 and
-96 add domains, and therefore controllers, and therefore bandwidth. Worth
-planning around: **going from 16 to 24 cores buys nothing**, so the sizes worth
-asking for are 8, 16, or a multiple of 24.
+**Scaling is real but far from linear, and it is bandwidth that is missing, not
+parallelism.** Amdahl is not the binding constraint at 10 Gy/s: the phases that
+are still serial come to ~10 s of a 593 s run, which would permit ~59×. The
+measured 8.6× is what the memory controllers will give.
 
-**Shortest wall time is ~96 threads, and 190 is worse than 96.** Past one socket
-the threads span both, the kernels' static `prange` chunks stop matching where
-the pages live, and the run slows down. There is no configuration in which
-asking for all 190 cores is the right call for one run.
+**The curve has plateaus, and they are the memory hierarchy.** 4 → 8 threads
+buys almost nothing (207 s → 195 s): eight cores are one CCD sharing one link,
+and four already saturate it. Progress resumes only when a job spans more of
+them — 32 → 64 threads is the biggest single step in the table (131 s → 78 s).
+Cores are not what is being bought; memory controllers are.
 
-**Per-core efficiency is best at the low end.** 8 threads gets 33 % of ideal;
-96 gets 9 %. So a node running **8 concurrent 24-thread jobs** does far more
-science per hour than one 190-thread job: 8 × 3.9 = 31× aggregate against 5.5×,
-and twelve 16-thread jobs better still at 12 × 3.7 = 44×. For anything that is a parameter study — seeds, dose rates, voltages — that is
-the configuration to use, as a Slurm job array.
+**Per-core efficiency runs the other way, and that is the actionable half.**
+2 threads returns 85–95 % of ideal, 128 threads returns 6–7 %. A node carved
+into **sixteen 8-thread jobs** does 16 × 3.05 = 49× the work per hour that one
+128-thread job's 8.6× does. For a parameter study — seeds, dose rates,
+voltages — that is the configuration to use, as a Slurm job array. Reach for
+128 threads only when one specific answer is wanted quickly.
 
-**The curve is noisy above ~24 threads.** Repeat measurements at 96 came out
-between 70 s and 93 s, and one 48-thread run measured slower than 96 while
-another measured faster. Treat any single number above 24 threads as ±30 %, and
-do not tune against differences smaller than that.
+**Do not ask for the whole node.** 190 threads measured 124 s against 128
+threads' 69 s: past one socket the threads span both, the kernels' static
+`prange` chunks stop matching where the pages live, and it gets worse. There is
+no configuration in which asking for all 190 cores is right.
 
-## 5. What one core costs
+A caution on precision: repeated 96-thread runs during development came out
+between 70 s and 93 s. Treat any single number above ~16 threads as ±30 % and
+do not tune against smaller differences.
 
-680 s for the full electrode, and **2.0 s for the `archive` tier**. The same
+## 5. Dose rate: 10 vs 50 Gy/s
+
+The same grid at five times the track count. This pair separates the two halves
+of the code, because the PDE sweep does not depend on dose rate *at all* and the
+deposition phases scale linearly with it:
+
+| threads | 10 Gy/s | 50 Gy/s | ratio |
+|---|---|---|---|
+| 1 | 593 s | 755 s | 1.27× |
+| 2 | 351 s | 399 s | 1.14× |
+| 4 | 207 s | 325 s | 1.57× |
+| 8 | 195 s | 370 s | 1.90× |
+| 16 | 169 s | 256 s | 1.52× |
+| 32 | 131 s | 177 s | 1.35× |
+| 64 | 78 s | 139 s | 1.78× |
+| 128 | 69 s | 97 s | 1.41× |
+
+**Five times the dose costs 1.3–1.9× the time, not 5×.** That is the batched
+deposition working as designed: a step's tracks are summed into one 2D array and
+broadcast down the gap once, so the `O(no_z)` part is paid per *step* and not
+per *track* (see `solver_numba_parallel`). The PDE sweep, which is most of the
+run, does not notice the dose rate at all.
+
+**But the ratio drifts upward with thread count**, from ~1.2× at low counts to
+~1.4–1.9× at high ones, and that drift is the diagnosis: the sweep parallelises
+and the leftover per-track work does not. At 128 threads the sweep has shrunk to
+a few ms/step while `_precompute_track_gaussians` — a serial NumPy `exp` over
+`n_tracks × stencil` — has not moved. Phase timing at 96 threads makes it
+explicit: that one phase is 9 % of the 10 Gy/s run and **33 %** of the 50 Gy/s
+run, level with the sweep itself.
+
+**So the higher the dose rate, the lower the thread count worth asking for.**
+At 50 Gy/s, 128 threads returns 7.8× against 10 Gy/s's 8.6×, and the gap widens
+with every further core. A FLASH-regime study — high dose rate, many parameter
+points — should be a job array of 8-thread jobs, not a queue of wide ones.
+
+The physics moves too, and much further than the cost: `k_s` goes from 1.1111 to
+1.4464, i.e. 10.0 % of the charge recombines at 10 Gy/s against 30.9 % at
+50 Gy/s. Five times the dose rate, three times the loss — the superlinearity
+expected from a recombination term that goes as `n₊n₋`. See PHYSICS.md.
+
+## 6. What one core costs
+
+593 s for the full electrode at 10 Gy/s, 755 s at 50 Gy/s, and **2.0 s for the
+`archive` tier**. The same
 `archive` run takes 1.8 s on a 2024 laptop (Intel Core Ultra 5 225U), so a
 Helios core is about **10 % slower than a laptop core** on this workload. That is
 the expected shape: an EPYC 9654 core runs at a lower clock and gets ~9 GB/s of
@@ -125,7 +174,7 @@ The consequence worth internalising: **Helios is not a faster computer, it is a
 wider one.** Nothing here gets quicker by being moved to Helios unless it is
 either given many cores on a grid large enough to use them, or replicated.
 
-## 6. Why threads help here but not on a laptop
+## 7. Why threads help here but not on a laptop
 
 `docs/PERFORMANCE.md` §6 used to say threads make things worse, measured on the
 5 µm "converged" grid: 40 MiB of carrier arrays, comfortably inside this node's
@@ -180,7 +229,7 @@ the next call, so published `k_s` values stay tied to their seeds.
 - **Pinning threads** — see §3, 8.5× worse.
 - **More than ~96 threads** — see §4.
 
-## 7. Where the remaining time goes
+## 8. Where the remaining time goes
 
 Full-electrode run at 96 threads, `phase_timing=True`:
 
@@ -201,7 +250,7 @@ alone deliberately — Numba's `exp` and NumPy's can differ in the last ULP, and
 that would break the bit-for-bit reproduction of the archived `k_s` values that
 everything else here preserves.
 
-## 8. Reproducing the numbers on this page
+## 9. Reproducing the numbers on this page
 
 ```bash
 # per-phase kernel scaling, including the NUMA first-touch comparison (~3 min)

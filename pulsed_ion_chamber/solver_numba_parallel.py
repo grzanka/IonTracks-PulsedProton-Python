@@ -64,8 +64,8 @@ depend entirely on the size of the grid relative to the machine:
   saturates around 1.7x on two threads and gets *worse* beyond that.
 * **A NUMA server and a grid larger than its aggregate L3.** One core gets a
   single core's share of bandwidth -- 9 GB/s of a node's ~900 GB/s on a dual
-  EPYC 9654 -- and threads scale nearly linearly until the controllers
-  saturate. Measured 25x on the full-electrode grid.
+  EPYC 9654 -- and more threads buy more memory controllers. Measured 8.6x on
+  the full-electrode grid at 128 threads, against 1.7x on a laptop.
 
 Two things had to be fixed before that second case worked, and both are the
 kind of thing that shows up only above a few hundred MiB (docs/HELIOS.md has
