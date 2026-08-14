@@ -17,6 +17,10 @@
 #   ./submit.sh --rates "50"          only this dose rate (Gy/s to water)
 #   ./submit.sh --account plgXXX-cpu  charge a different grant (default plgccbmc15-cpu)
 #   ./submit.sh --mem 16G             memory per job (default 8G; ~2.1 GiB is used)
+#   ./submit.sh --exclusive           a whole node per job. Slower to schedule and it
+#                                     charges 192 cores for a 1-core run, but this
+#                                     benchmark is bandwidth-bound and a co-tenant
+#                                     competes for the very thing being measured.
 #   ./submit.sh --dry-run             print what would be submitted, submit nothing
 #
 # Results land in profiling/data/helios_scaling/ as one JSON per run, with
@@ -32,6 +36,7 @@ ACCOUNT="${ACCOUNT:-plgccbmc15-cpu}"
 # a 1-core job would otherwise get 1.5 GB against a measured peak of ~2.1 GiB
 # and be OOM-killed -- the grid does not shrink when the thread count does.
 MEM="${MEM:-8G}"
+EXCLUSIVE="${EXCLUSIVE:-0}"
 DRY_RUN=0
 
 while [ $# -gt 0 ]; do
@@ -40,8 +45,9 @@ while [ $# -gt 0 ]; do
     --rates)   DOSE_RATES="$2";    shift 2 ;;
     --account) ACCOUNT="$2";       shift 2 ;;
     --mem)     MEM="$2";           shift 2 ;;
+    --exclusive) EXCLUSIVE=1;      shift ;;
     --dry-run) DRY_RUN=1;          shift ;;
-    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -66,6 +72,7 @@ if [ "$DRY_RUN" = "1" ]; then
   echo "rates   : ${DOSE_RATES} Gy/s to water"
   echo "account : ${ACCOUNT}"
   echo "memory  : ${MEM} per job"
+  echo "exclusive: $([ "$EXCLUSIVE" = "1" ] && echo yes || echo no)"
   exit 0
 fi
 
@@ -77,5 +84,5 @@ fi
 
 # --- submit -----------------------------------------------------------------
 THREAD_COUNTS="${THREAD_COUNTS}" DOSE_RATES="${DOSE_RATES}" \
-ACCOUNT="${ACCOUNT}" MEM="${MEM}" \
+ACCOUNT="${ACCOUNT}" MEM="${MEM}" EXCLUSIVE="${EXCLUSIVE}" \
   bash "${REPO}/profiling/helios_scaling/submit_all.sh"

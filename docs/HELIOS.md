@@ -115,9 +115,33 @@ threads' 69 s: past one socket the threads span both, the kernels' static
 `prange` chunks stop matching where the pages live, and it gets worse. There is
 no configuration in which asking for all 190 cores is right.
 
-A caution on precision: repeated 96-thread runs during development came out
-between 70 s and 93 s. Treat any single number above ~16 threads as ±30 % and
-do not tune against smaller differences.
+### A caveat on this table: the jobs were not exclusive
+
+`./submit.sh` asks for `--cpus-per-task=N`, not for a node, so Slurm is free to
+put other work on the same node — including other jobs from the same study.
+Eleven of these sixteen runs shared a node with another of our own, and for a
+benchmark that is *memory-bandwidth-bound* a co-tenant competes for precisely
+the quantity being measured.
+
+Re-measured on an uncontended node, at 50 Gy/s:
+
+| threads | in the table (shared) | uncontended | inflation |
+|---|---|---|---|
+| 4 | 325 s | 290 s | +12 % |
+| 8 | 370 s | 313 s | +18 % |
+
+So read the table as ±20 %, and do not tune against differences smaller than
+that. `./submit.sh --exclusive` gives a whole node per job and removes the
+effect, at the price of charging 192 cores to run a 1-core job — worth it for a
+number that is going to be quoted, wasteful otherwise.
+
+**What the re-measurement did *not* overturn is the 4 → 8 inversion at 50 Gy/s.**
+Uncontended, 8 threads (313 s) is still slower than 4 (290 s). That is real: at
+this dose rate the deposition phases are a third of the run, they parallelise
+over grid rows with an uneven number of tracks each, and adding threads inside a
+single CCD adds imbalance and synchronisation without adding bandwidth. The
+10 Gy/s column, where deposition is a tenth of the run, shows the same step as a
+plateau rather than a reversal (207 s → 195 s).
 
 ## 5. Dose rate: 10 vs 50 Gy/s
 

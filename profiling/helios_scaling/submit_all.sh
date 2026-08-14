@@ -36,6 +36,13 @@ LOGDIR="${OUTDIR}/logs"
 ACCOUNT="${ACCOUNT:-plgccbmc15-cpu}"
 PARTITION="${PARTITION:-plgrid}"
 MEM="${MEM:-8G}"                      # vs ~2.1 GiB measured peak RSS
+# Whole node per job. Off by default because it charges 192 cores to run a
+# 1-core job; on for a definitive measurement, because this benchmark is
+# memory-bandwidth-bound and a co-tenant on the same node competes for exactly
+# the resource being measured. Measured symptom of leaving it off: the 8-thread
+# 50 Gy/s point landed on a node already running a 64-thread job of ours and
+# came out slower than the 4-thread point.
+EXCLUSIVE="${EXCLUSIVE:-0}"
 DOSE_RATES="${DOSE_RATES:-50 10}"
 THREAD_COUNTS="${THREAD_COUNTS:-1 2 4 8 16 32 64 128}"
 
@@ -67,6 +74,7 @@ echo "results   : ${OUTDIR}"
 echo "account   : ${ACCOUNT}"
 echo "partition : ${PARTITION}"
 echo "memory    : ${MEM} per job (peak RSS measured at ~2.1 GiB)"
+echo "exclusive : $([ "$EXCLUSIVE" = "1" ] && echo "yes -- whole node per job" || echo "no -- nodes may be shared, see README")"
 echo "threads   : ${THREAD_COUNTS}"
 echo "rates     : ${DOSE_RATES} Gy/s to water"
 echo
@@ -75,7 +83,10 @@ submitted=0
 for n in $THREAD_COUNTS; do
   walltime="$(walltime_for "$n")"
   for rate in $DOSE_RATES; do
+    exclusive_args=()
+    [ "$EXCLUSIVE" = "1" ] && exclusive_args=(--exclusive)
     jobid=$(sbatch --parsable \
+      "${exclusive_args[@]}" \
       --job-name="ks-n${n}-d${rate}" \
       --account="${ACCOUNT}" \
       --partition="${PARTITION}" \
@@ -87,7 +98,7 @@ for n in $THREAD_COUNTS; do
       --output="${LOGDIR}/ks-n${n}-d${rate}-%j.out" \
       --export=ALL,THREADS="${n}",DOSE_RATES="${rate}",OUTDIR="${OUTDIR}",REPO="${REPO}" \
       "${REPO}/profiling/helios_scaling/scaling_job.sbatch")
-    echo "submitted ${jobid}  threads=${n}  dose=${rate} Gy/s  cpus=${n}  mem=${MEM}  walltime=${walltime}"
+    echo "submitted ${jobid}  threads=${n}  dose=${rate} Gy/s  cpus=${n}  mem=${MEM}  walltime=${walltime}$([ "$EXCLUSIVE" = "1" ] && echo "  exclusive")"
     submitted=$((submitted + 1))
   done
 done
