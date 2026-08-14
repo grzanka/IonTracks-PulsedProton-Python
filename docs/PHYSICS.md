@@ -457,24 +457,54 @@ would stop being safe.
 
 ## 14. Known systematics and convergence
 
-**Column radius is the dominant one.** `k_s` rises with `sampled_radius_cm`
-— on the AIC-144 scenario, 1.058 at 30 µm, 1.093 at 80 µm, 1.101 at 140 µm,
-1.104 at 180 µm — and only flattens above ~140 µm.
+**Finite column radius is the dominant one, and it does not converge quickly.**
+`k_s` rises with `sampled_radius_cm` throughout the accessible range:
 
-**Why.** It is not a boundary-condition or scoring artifact; it survives every
-combination of §10 and §11. It is intrinsic to drawing tracks in a finite disc:
-a track near the edge has neighbouring tracks on one side only, so the local
-charge density — and hence `α n₊ n₋` — is genuinely lower there. The deficit
-vanishes only as the edge fraction does. **Choose `sampled_radius_cm ≥ 140 µm`
-for a converged result**, and treat anything smaller as a development setting.
+| `sampled_radius_cm` | k_s | shortfall vs. an infinite column |
+|---|---|---|
+| 0.003 (30 µm) | 1.0580 | 4.9 % |
+| 0.008 (80 µm) | 1.0929 | 1.7 % |
+| 0.014 (140 µm) | 1.1011 | 1.0 % |
+| 0.018 (180 µm) | 1.1035 | 0.8 % |
+| 0.265 (2.65 mm, the full electrode) | 1.1111 | 0.1 % |
 
-The structural fix, not currently implemented, is a periodic lateral boundary
-with tracks filling the whole periodic cell, which removes the edge entirely and
-would let a much smaller column give the converged answer.
+**Why.** A track near the rim of the sampled disc has neighbouring tracks on one
+side only, so the local charge density — and hence `α n₊ n₋` — is genuinely
+lower there. This is a property of sampling a finite disc from a uniformly
+irradiated plane, not an artifact: it survives every combination of boundary
+condition (§10) and scoring region (§11). The affected material is an annulus a
+few diffusion lengths wide, so the deficit is a **perimeter-to-area** effect and
+falls as `1/r`:
+
+```
+k_s(r) = k_∞ − A/r        k_∞ = 1.1119        A = 1.512 µm
+```
+
+for the AIC-144 Markus scenario. Fitting `k_∞` and `A` on the 140 µm and 180 µm
+points alone predicts the *measured* 2.65 mm full-electrode result to
+**3e-4 in k_s** — a 15× extrapolation in radius — and reproduces the 80 µm
+point to 1e-4. Below ~80 µm the column is only a few track radii across and
+other effects enter; the law should not be trusted there.
+
+**How to use this.** Do not chase convergence by enlarging the column: the cost
+grows as `r²` while the residual bias only falls as `1/r`, so buying the last
+percent costs two orders of magnitude in time. Instead **run a cheap column and
+correct**. An 80 µm column (1.8 s) plus `A/r` gives 1.1118 against the
+full-electrode 1.1111 — closer than the 2.65 mm run itself, which is still
+0.1 % low. Quote `k_∞`, and quote the raw value and the correction alongside it.
+
+Both `A` and `k_∞` are scenario-specific. Re-fit them for a new beam, gap or
+dose rate by running two radii in the 100–200 µm range and solving the two
+equations; that costs about a minute.
+
+**The structural fix**, not currently implemented, is a periodic lateral
+boundary with tracks filling the whole periodic cell. That removes the rim
+entirely — every track then has a full complement of neighbours — so a small
+column would give `k_∞` directly with no extrapolation and no residual bias.
 
 **Track-core resolution.** 2 voxels per Gaussian radius (§7) is the other
-approximation worth quantifying; halving `grid_size_um` is the check, at 8× the
-cost.
+approximation worth quantifying; halving `grid_size_um` is the check, at 8–16×
+the cost.
 
 **Statistical noise.** Track positions and arrival times are random; `seed` fixes
 them. Repeat runs with different seeds to size the scatter before attributing a

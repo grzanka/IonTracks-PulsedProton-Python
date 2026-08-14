@@ -39,15 +39,28 @@ uniform and normal to the electrodes.
 
 ## Grid tiers and results
 
-| tier | `sampled_radius_cm` | grid | tracks/pulse | wall time | k_s = 1/f |
-|---|---|---|---|---|---|
-| `dev` | 0.003 (30 µm) | 12²×210 | 3 157 | 0.2 s | 1.0580 |
-| `archive` | 0.008 (80 µm) | 22²×210 | 22 447 | 1.8 s | 1.0929 |
-| `converged` | 0.014 (140 µm) | 34²×210 | 68 744 | 8.8 s | 1.1011 |
-| `production` | 0.018 (180 µm) | 42²×210 | 113 638 | 14.5 s | 1.1035 |
+| tier | `sampled_radius_cm` | grid | tracks/pulse | wall time | k_s = 1/f | corrected |
+|---|---|---|---|---|---|---|
+| `dev` | 0.003 (30 µm) | 12²×210 | 3 157 | 0.2 s | 1.0580 | 1.1084 |
+| `archive` | 0.008 (80 µm) | 22²×210 | 22 447 | 1.8 s | 1.0929 | 1.1118 |
+| `standard` | 0.014 (140 µm) | 34²×210 | 68 744 | 8.8 s | 1.1011 | 1.1119 |
+| `wide` | 0.018 (180 µm) | 42²×210 | 113 638 | 14.5 s | 1.1035 | 1.1119 |
+| `full_electrode` | 0.265 (2.65 mm) | 536²×210 | 24 630 400 | 12.8 min | 1.1111 | 1.1117 |
 
-`k_s` is converged in column radius from `converged` upwards; the two smaller
-tiers are development settings and are biased low (`docs/PHYSICS.md` §14).
+**No tier is converged in column radius.** A track at the rim of the sampled
+disc has neighbours on one side only, so `k_s` is biased low by a
+perimeter-to-area effect that falls only as `1/r`:
+
+```
+k_s(r) = 1.1119 − 1.512 µm / r
+```
+
+The "corrected" column applies it. Enlarging the column is the wrong way to
+chase the residual — cost grows as `r²` while the bias falls as `1/r`, so the
+80 µm run plus the correction is both faster and closer to the limit than the
+full electrode. **Quote k_∞ = 1.1119** for this scenario, with the raw value and
+correction stated alongside. See `docs/PHYSICS.md` §14; the full-electrode run
+exists to verify the extrapolation, which it does across a 15× range in radius.
 
 ## Comparing against other IonTracks results
 

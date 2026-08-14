@@ -307,7 +307,10 @@ Same physics, same RNG stream, same answer to 1e-9 — enforced by
 
 The first two are what matter, and they peak at different times — the schedule
 is built and discarded before the carrier arrays are touched — so the estimate
-is the larger of the two, not the sum. `SimulationConfig` computes this as
+is the larger of the two, not the sum. It counts allocations this code makes,
+not the interpreter, Numba's runtime or NumPy's transient temporaries: on the
+full-electrode run the estimate was 1.80 GiB against a measured peak RSS of
+2.02 GiB, 12 % higher. The default 0.8 budget absorbs that margin. `SimulationConfig` computes this as
 `estimated_memory_bytes` and refuses to build a config that would exceed
 `memory_budget_fraction` (default 0.8) of available RAM, because the
 alternative is discovering the problem via the OOM killer twenty minutes into a
