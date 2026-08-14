@@ -26,8 +26,9 @@ leaves on the table, on top of JIT compilation:
    `O(no_xy^2)` calls to `exp` -- exact, not an approximation.
 
 Both hot loops also compare *squared* distances against a precomputed
-`inner_radius_sq` instead of calling `sqrt` per voxel/track (see
-SimulationConfig.inner_radius_sq in config.py).
+`scoring_radius_sq` instead of calling `sqrt` per voxel/track (see
+SimulationConfig.scoring_radius_sq in config.py, which also selects
+whether that radius is the track disc or the whole grid).
 
 Numba's `nopython` mode cannot take the `SimulationConfig` dataclass
 directly (it isn't a numba-compatible type), so the jitted functions take
@@ -43,9 +44,9 @@ import numpy as np
 import numpy.typing as npt
 
 from pulsed_ion_chamber.config import SimulationConfig
-from pulsed_ion_chamber.constants import ION_DIFFUSION_CM2_S, ION_MOBILITY_CM2_VS, RECOMBINATION_ALPHA_CM3_S
+from pulsed_ion_chamber.constants import RECOMBINATION_ALPHA_CM3_S
 from pulsed_ion_chamber.pulses import build_track_schedule, sample_xy_inside_cylinder
-from pulsed_ion_chamber.solver import Result
+from pulsed_ion_chamber.solver import Result, apply_lateral_boundary
 
 FloatArray3D = npt.NDArray[np.float64]
 FloatArray1D = npt.NDArray[np.float64]
@@ -64,7 +65,7 @@ def _insert_track_numba(
     b2: float,
     gaussian_factor: float,
     mid_xy: int,
-    inner_radius_sq: float,
+    scoring_radius_sq: float,
 ) -> float:
     """Add one Gaussian ion track's charge density to both carrier arrays.
 
@@ -94,7 +95,7 @@ def _insert_track_numba(
             for k in range(k_lo, k_hi):
                 positive_array[i, j, k] += ion_density
                 negative_array[i, j, k] += ion_density
-            if di_sq + (j - mid_xy) ** 2 < inner_radius_sq:
+            if di_sq + (j - mid_xy) ** 2 < scoring_radius_sq:
                 inserted += ion_density * no_z
 
     return inserted
@@ -111,15 +112,23 @@ def _lax_wendroff_step_numba(
     no_z_electrode: int,
     no_z: int,
     mid_xy: int,
-    inner_radius_sq: float,
-    sx: float,
-    sc_pos_z: float,
-    sc_neg_z: float,
-    sc_center: float,
+    scoring_radius_sq: float,
+    p_lat: float,
+    p_zm: float,
+    p_zp: float,
+    p_cen: float,
+    n_lat: float,
+    n_zm: float,
+    n_zp: float,
+    n_cen: float,
     alpha_dt: float,
 ) -> float:
     """Advance both carrier densities by one time step and accumulate the
     recombination that occurred inside the scored gap region.
+
+    The p_*/n_* scalars are the per-species (lateral, z_minus, z_plus, centre)
+    stencil weights from config.scheme_coefficients(); they are equal unless
+    the two Kanai carrier species are being resolved separately.
 
     Whether (i, j) falls inside the scored cylinder doesn't depend on k,
     so it's evaluated once per (i, j) here rather than once per (i, j, k).
@@ -128,31 +137,31 @@ def _lax_wendroff_step_numba(
     for i in range(1, no_xy - 1):
         di_sq = (i - mid_xy) ** 2
         for j in range(1, no_xy - 1):
-            inside = di_sq + (j - mid_xy) ** 2 < inner_radius_sq
+            inside = di_sq + (j - mid_xy) ** 2 < scoring_radius_sq
 
             for k in range(1, no_z_with_buffer - 1):
                 p = positive_array[i, j, k]
                 n = negative_array[i, j, k]
 
                 p_new = (
-                    sc_pos_z * positive_array[i, j, k - 1]
-                    + sc_neg_z * positive_array[i, j, k + 1]
-                    + sx * positive_array[i, j - 1, k]
-                    + sx * positive_array[i, j + 1, k]
-                    + sx * positive_array[i - 1, j, k]
-                    + sx * positive_array[i + 1, j, k]
-                    + sc_center * p
+                    p_zm * positive_array[i, j, k - 1]
+                    + p_zp * positive_array[i, j, k + 1]
+                    + p_lat * positive_array[i, j - 1, k]
+                    + p_lat * positive_array[i, j + 1, k]
+                    + p_lat * positive_array[i - 1, j, k]
+                    + p_lat * positive_array[i + 1, j, k]
+                    + p_cen * p
                 )
                 # negative ions drift opposite to positive ions, so the
                 # +z/-z neighbour coefficients are swapped relative to p_new
                 n_new = (
-                    sc_pos_z * negative_array[i, j, k + 1]
-                    + sc_neg_z * negative_array[i, j, k - 1]
-                    + sx * negative_array[i, j - 1, k]
-                    + sx * negative_array[i, j + 1, k]
-                    + sx * negative_array[i - 1, j, k]
-                    + sx * negative_array[i + 1, j, k]
-                    + sc_center * n
+                    n_zm * negative_array[i, j, k + 1]
+                    + n_zp * negative_array[i, j, k - 1]
+                    + n_lat * negative_array[i, j - 1, k]
+                    + n_lat * negative_array[i, j + 1, k]
+                    + n_lat * negative_array[i - 1, j, k]
+                    + n_lat * negative_array[i + 1, j, k]
+                    + n_cen * n
                 )
 
                 recomb = alpha_dt * p * n
@@ -177,7 +186,9 @@ def warmup() -> None:
     shape = (4, 4, 4)
     p, n, p_next, n_next = (np.zeros(shape) for _ in range(4))
     _insert_track_numba(p, n, 2.0, 2.0, 4, 1, 1, 1.0, 1.0, 1.0, 2, 1.0)
-    _lax_wendroff_step_numba(p, n, p_next, n_next, 4, 4, 1, 1, 2, 1.0, 0.01, 0.01, 0.01, 0.97, 1e-9)
+    _lax_wendroff_step_numba(
+        p, n, p_next, n_next, 4, 4, 1, 1, 2, 1.0, 0.01, 0.01, 0.01, 0.97, 0.01, 0.01, 0.01, 0.97, 1e-9
+    )
 
 
 def run_simulation_numba(
@@ -195,11 +206,7 @@ def run_simulation_numba(
     positive_next: FloatArray3D = np.zeros(shape)
     negative_next: FloatArray3D = np.zeros(shape)
 
-    sx = ION_DIFFUSION_CM2_S * config.dt / config.unit_length_cm**2
-    cz = ION_MOBILITY_CM2_VS * config.Efield_V_cm * config.dt / config.unit_length_cm
-    sc_pos_z = sx + cz * (cz + 1.0) / 2.0
-    sc_neg_z = sx + cz * (cz - 1.0) / 2.0
-    sc_center = 1.0 - cz * cz - 6.0 * sx
+    (p_lat, p_zm, p_zp, p_cen), (n_lat, n_zm, n_zp, n_cen) = config.scheme_coefficients()
     alpha_dt = RECOMBINATION_ALPHA_CM3_S * config.dt
 
     h2 = config.unit_length_cm**2
@@ -212,7 +219,7 @@ def run_simulation_numba(
 
     for step in range(config.total_time_steps):
         for _ in range(schedule[step]):
-            x, y = sample_xy_inside_cylinder(rng, config.mid_xy, config.inner_radius, config.no_xy)
+            x, y = sample_xy_inside_cylinder(rng, config.mid_xy, config.sampling_radius, config.no_xy)
             no_initialised += _insert_track_numba(
                 positive_array,
                 negative_array,
@@ -225,7 +232,7 @@ def run_simulation_numba(
                 b2,
                 config.Gaussian_factor,
                 config.mid_xy,
-                config.inner_radius_sq,
+                config.scoring_radius_sq,
             )
 
         no_recombined += _lax_wendroff_step_numba(
@@ -238,16 +245,22 @@ def run_simulation_numba(
             config.no_z_electrode,
             config.no_z,
             config.mid_xy,
-            config.inner_radius_sq,
-            sx,
-            sc_pos_z,
-            sc_neg_z,
-            sc_center,
+            config.scoring_radius_sq,
+            p_lat,
+            p_zm,
+            p_zp,
+            p_cen,
+            n_lat,
+            n_zm,
+            n_zp,
+            n_cen,
             alpha_dt,
         )
 
         positive_array[1:-1, 1:-1, 1:-1] = positive_next[1:-1, 1:-1, 1:-1]
         negative_array[1:-1, 1:-1, 1:-1] = negative_next[1:-1, 1:-1, 1:-1]
+        apply_lateral_boundary(positive_array, config.lateral_boundary)
+        apply_lateral_boundary(negative_array, config.lateral_boundary)
 
         f_t[step] = 1.0 if no_initialised == 0.0 else (no_initialised - no_recombined) / no_initialised
 

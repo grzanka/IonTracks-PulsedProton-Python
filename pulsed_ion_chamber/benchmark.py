@@ -20,7 +20,7 @@ import time
 
 import numpy as np
 
-from pulsed_ion_chamber.constants import ION_DIFFUSION_CM2_S, ION_MOBILITY_CM2_VS, RECOMBINATION_ALPHA_CM3_S
+from pulsed_ion_chamber.constants import RECOMBINATION_ALPHA_CM3_S
 from pulsed_ion_chamber.pulses import sample_xy_inside_cylinder
 from pulsed_ion_chamber.solver import _insert_track, _lax_wendroff_step
 from pulsed_ion_chamber.solver_numba import _insert_track_numba, _lax_wendroff_step_numba, warmup
@@ -46,11 +46,8 @@ def estimate_full_runtime(config, n_track_samples=10, n_step_samples=3, rng=None
     positive_next = np.zeros(shape)
     negative_next = np.zeros(shape)
 
-    sx = ION_DIFFUSION_CM2_S * config.dt / config.unit_length_cm**2
-    cz = ION_MOBILITY_CM2_VS * config.Efield_V_cm * config.dt / config.unit_length_cm
-    sc_pos_z = sx + cz * (cz + 1.0) / 2.0
-    sc_neg_z = sx + cz * (cz - 1.0) / 2.0
-    sc_center = 1.0 - cz * cz - 6.0 * sx
+    pos_weights, neg_weights = config.scheme_coefficients()
+    (p_lat, p_zm, p_zp, p_cen), (n_lat, n_zm, n_zp, n_cen) = pos_weights, neg_weights
 
     if backend == "numba":
         warmup()  # one-off JIT compile, excluded from the timing below
@@ -71,7 +68,7 @@ def estimate_full_runtime(config, n_track_samples=10, n_step_samples=3, rng=None
                 b2,
                 config.Gaussian_factor,
                 config.mid_xy,
-                config.inner_radius_sq,
+                config.scoring_radius_sq,
             )
 
         def step_once():
@@ -85,11 +82,15 @@ def estimate_full_runtime(config, n_track_samples=10, n_step_samples=3, rng=None
                 config.no_z_electrode,
                 config.no_z,
                 config.mid_xy,
-                config.inner_radius_sq,
-                sx,
-                sc_pos_z,
-                sc_neg_z,
-                sc_center,
+                config.scoring_radius_sq,
+                p_lat,
+                p_zm,
+                p_zp,
+                p_cen,
+                n_lat,
+                n_zm,
+                n_zp,
+                n_cen,
                 alpha_dt,
             )
 
@@ -100,12 +101,12 @@ def estimate_full_runtime(config, n_track_samples=10, n_step_samples=3, rng=None
 
         def step_once():
             return _lax_wendroff_step(
-                positive_array, negative_array, positive_next, negative_next, config, sx, sc_pos_z, sc_neg_z, sc_center
+                positive_array, negative_array, positive_next, negative_next, config, pos_weights, neg_weights
             )
 
     t0 = time.perf_counter()
     for _ in range(n_track_samples):
-        x, y = sample_xy_inside_cylinder(rng, config.mid_xy, config.inner_radius, config.no_xy)
+        x, y = sample_xy_inside_cylinder(rng, config.mid_xy, config.sampling_radius, config.no_xy)
         insert_once(x, y)
     t_per_track = (time.perf_counter() - t0) / n_track_samples
 

@@ -67,9 +67,9 @@ import numpy.typing as npt
 from numba import prange
 
 from pulsed_ion_chamber.config import SimulationConfig
-from pulsed_ion_chamber.constants import ION_DIFFUSION_CM2_S, ION_MOBILITY_CM2_VS, RECOMBINATION_ALPHA_CM3_S
+from pulsed_ion_chamber.constants import RECOMBINATION_ALPHA_CM3_S
 from pulsed_ion_chamber.pulses import build_track_schedule, sample_xy_inside_cylinder
-from pulsed_ion_chamber.solver import Result
+from pulsed_ion_chamber.solver import Result, apply_lateral_boundary
 
 FloatArray3D = npt.NDArray[np.float64]
 FloatArray1D = npt.NDArray[np.float64]
@@ -87,7 +87,7 @@ def _insert_tracks_step_numba_parallel(
     no_z_electrode: int,
     gaussian_factor: float,
     mid_xy: int,
-    inner_radius_sq: float,
+    scoring_radius_sq: float,
 ) -> float:
     """Deposit ALL of one time step's tracks in a single pass over the grid.
 
@@ -113,7 +113,7 @@ def _insert_tracks_step_numba_parallel(
         for k in range(k_lo, k_hi):
             positive_array[i, j, k] += total_density
             negative_array[i, j, k] += total_density
-        if di_sq + (j - mid_xy) ** 2 < inner_radius_sq:
+        if di_sq + (j - mid_xy) ** 2 < scoring_radius_sq:
             inserted += total_density * no_z
 
     return inserted
@@ -130,44 +130,50 @@ def _lax_wendroff_step_numba_parallel(
     no_z_electrode: int,
     no_z: int,
     mid_xy: int,
-    inner_radius_sq: float,
-    sx: float,
-    sc_pos_z: float,
-    sc_neg_z: float,
-    sc_center: float,
+    scoring_radius_sq: float,
+    p_lat: float,
+    p_zm: float,
+    p_zp: float,
+    p_cen: float,
+    n_lat: float,
+    n_zm: float,
+    n_zp: float,
+    n_cen: float,
     alpha_dt: float,
 ) -> float:
     """Same as _lax_wendroff_step_numba, parallel over the flattened
-    (i, j) index (see module docstring for why not `i` alone)."""
+    (i, j) index (see module docstring for why not `i` alone). The p_*/n_*
+    scalars are the per-species stencil weights from
+    config.scheme_coefficients()."""
     recombined = 0.0
     n_inner = no_xy - 2
     for idx in prange(n_inner * n_inner):
         i = 1 + idx // n_inner
         j = 1 + idx % n_inner
         di_sq = (i - mid_xy) ** 2
-        inside = di_sq + (j - mid_xy) ** 2 < inner_radius_sq
+        inside = di_sq + (j - mid_xy) ** 2 < scoring_radius_sq
 
         for k in range(1, no_z_with_buffer - 1):
             p = positive_array[i, j, k]
             n = negative_array[i, j, k]
 
             p_new = (
-                sc_pos_z * positive_array[i, j, k - 1]
-                + sc_neg_z * positive_array[i, j, k + 1]
-                + sx * positive_array[i, j - 1, k]
-                + sx * positive_array[i, j + 1, k]
-                + sx * positive_array[i - 1, j, k]
-                + sx * positive_array[i + 1, j, k]
-                + sc_center * p
+                p_zm * positive_array[i, j, k - 1]
+                + p_zp * positive_array[i, j, k + 1]
+                + p_lat * positive_array[i, j - 1, k]
+                + p_lat * positive_array[i, j + 1, k]
+                + p_lat * positive_array[i - 1, j, k]
+                + p_lat * positive_array[i + 1, j, k]
+                + p_cen * p
             )
             n_new = (
-                sc_pos_z * negative_array[i, j, k + 1]
-                + sc_neg_z * negative_array[i, j, k - 1]
-                + sx * negative_array[i, j - 1, k]
-                + sx * negative_array[i, j + 1, k]
-                + sx * negative_array[i - 1, j, k]
-                + sx * negative_array[i + 1, j, k]
-                + sc_center * n
+                n_zm * negative_array[i, j, k + 1]
+                + n_zp * negative_array[i, j, k - 1]
+                + n_lat * negative_array[i, j - 1, k]
+                + n_lat * negative_array[i, j + 1, k]
+                + n_lat * negative_array[i - 1, j, k]
+                + n_lat * negative_array[i + 1, j, k]
+                + n_cen * n
             )
 
             recomb = alpha_dt * p * n
@@ -197,7 +203,9 @@ def warmup_parallel() -> None:
     p, n, p_next, n_next = (np.zeros(shape) for _ in range(4))
     gauss_i, gauss_j = _precompute_track_gaussians(np.array([2.0]), np.array([2.0]), 4, 1.0, 1.0)
     _insert_tracks_step_numba_parallel(p, n, gauss_i, gauss_j, 4, 1, 1, 1.0, 2, 1.0)
-    _lax_wendroff_step_numba_parallel(p, n, p_next, n_next, 4, 4, 1, 1, 2, 1.0, 0.01, 0.01, 0.01, 0.97, 1e-9)
+    _lax_wendroff_step_numba_parallel(
+        p, n, p_next, n_next, 4, 4, 1, 1, 2, 1.0, 0.01, 0.01, 0.01, 0.97, 0.01, 0.01, 0.01, 0.97, 1e-9
+    )
 
 
 def run_simulation_numba_parallel(
@@ -230,11 +238,7 @@ def run_simulation_numba_parallel(
     positive_next: FloatArray3D = np.zeros(shape)
     negative_next: FloatArray3D = np.zeros(shape)
 
-    sx = ION_DIFFUSION_CM2_S * config.dt / config.unit_length_cm**2
-    cz = ION_MOBILITY_CM2_VS * config.Efield_V_cm * config.dt / config.unit_length_cm
-    sc_pos_z = sx + cz * (cz + 1.0) / 2.0
-    sc_neg_z = sx + cz * (cz - 1.0) / 2.0
-    sc_center = 1.0 - cz * cz - 6.0 * sx
+    (p_lat, p_zm, p_zp, p_cen), (n_lat, n_zm, n_zp, n_cen) = config.scheme_coefficients()
     alpha_dt = RECOMBINATION_ALPHA_CM3_S * config.dt
 
     h2 = config.unit_length_cm**2
@@ -251,7 +255,7 @@ def run_simulation_numba_parallel(
             xs = np.empty(n_tracks_this_step)
             ys = np.empty(n_tracks_this_step)
             for t in range(n_tracks_this_step):
-                xs[t], ys[t] = sample_xy_inside_cylinder(rng, config.mid_xy, config.inner_radius, config.no_xy)
+                xs[t], ys[t] = sample_xy_inside_cylinder(rng, config.mid_xy, config.sampling_radius, config.no_xy)
             gauss_i, gauss_j = _precompute_track_gaussians(xs, ys, config.no_xy, h2, b2)
             no_initialised += _insert_tracks_step_numba_parallel(
                 positive_array,
@@ -263,7 +267,7 @@ def run_simulation_numba_parallel(
                 config.no_z_electrode,
                 config.Gaussian_factor,
                 config.mid_xy,
-                config.inner_radius_sq,
+                config.scoring_radius_sq,
             )
 
         no_recombined += _lax_wendroff_step_numba_parallel(
@@ -276,16 +280,22 @@ def run_simulation_numba_parallel(
             config.no_z_electrode,
             config.no_z,
             config.mid_xy,
-            config.inner_radius_sq,
-            sx,
-            sc_pos_z,
-            sc_neg_z,
-            sc_center,
+            config.scoring_radius_sq,
+            p_lat,
+            p_zm,
+            p_zp,
+            p_cen,
+            n_lat,
+            n_zm,
+            n_zp,
+            n_cen,
             alpha_dt,
         )
 
         positive_array[1:-1, 1:-1, 1:-1] = positive_next[1:-1, 1:-1, 1:-1]
         negative_array[1:-1, 1:-1, 1:-1] = negative_next[1:-1, 1:-1, 1:-1]
+        apply_lateral_boundary(positive_array, config.lateral_boundary)
+        apply_lateral_boundary(negative_array, config.lateral_boundary)
 
         f_t[step] = 1.0 if no_initialised == 0.0 else (no_initialised - no_recombined) / no_initialised
 

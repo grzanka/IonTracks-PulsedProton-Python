@@ -2,10 +2,13 @@
 
 Findings from mapping one archived IonTracks v2 (FEniCSx) run onto this
 repository, plus a full cross-code comparison of the physics and numerics
-of the three IonTracks implementations involved.
+of the three IonTracks implementations involved — and the port of v2's
+physics into this repository's rectangular-grid solver.
 
-**Nothing here is implemented yet** — this document is the analysis and the
-plan. No code under `pulsed_ion_chamber/` has been changed on this branch.
+Sections 1–4 are the analysis. **Section 5 is what was implemented**,
+section 6 is what was deliberately not, and **section 7 is the
+execution-time report**. Run it with
+`python examples/ifj_aic144/run_markus_2mm.py`.
 
 Source of the reference case:
 `IonTracks-experiments-archive/campaigns/ifj_aic144/markus_chambers_20260813/`
@@ -67,16 +70,18 @@ total steps  = 1 622  (1 412 injection + 210 clearance) = 621 µs
 ## 3. Measured runtimes and radius convergence
 
 All rows measured on this machine with `solver_numba` (single-threaded), under
-the **nominal** dose convention (§4.1), `W` and `ρ_air` folded in to match the
-archive:
+the **nominal** dose convention (§4.4), with the full v2 physics of §5 in
+place (`buffer_radius=3`, which the reflecting wall makes sufficient):
 
-| `sampled_radius_cm` | grid | tracks/pulse | `solver_numba` | `solver.py` (est.) | k_s |
+| tier | `sampled_radius_cm` | grid | tracks/pulse | `solver_numba` | k_s |
 |---|---|---|---|---|---|
-| 0.003 (30 µm) | 14²×210 | ~3.4 k | ~0.2 s | ~220 s | — |
-| 0.004 (40 µm) | 16²×210 | 12 299 | 0.70 s | ~430 s | — |
-| **0.008 (80 µm)** | 24²×210 | 24 104 | **2.8 s** | **~0.9 h** | **1.1034** |
-| 0.014 (140 µm) | 36²×210 | 73 820 | 20 s | — | **1.1129** |
-| 0.018 (180 µm) | 44²×210 | ~122 k | ~60 s (est.) | — | — |
+| `dev` | 0.003 (30 µm) | 12²×210 | 3 157 | 0.2 s | 1.0580 |
+| `archive` | **0.008 (80 µm)** | 22²×210 | 22 447 | **2.0 s** | **1.0929** |
+| `converged` | 0.014 (140 µm) | 34²×210 | 68 744 | 17.4 s | 1.1011 |
+| `production` | 0.018 (180 µm) | 42²×210 | 113 638 | 41.3 s | 1.1035 |
+
+The pure-Python reference (`solver.py`) is ~550× slower: the `archive` tier is
+**~0.9 h** there.
 
 Two things follow.
 
@@ -88,7 +93,7 @@ split therefore only exists for `solver.py`, where it is dev r ≈ 20 µm
 (~100 s) ↔ archive r = 80 µm (~0.9 h).
 
 **The archive's own column is not radius-converged.** Under the as-run density
-(§4.1) k_s runs 1.078 → 1.148 → 1.190 across 20 → 80 µm and only flattens by
+(§4.4) k_s runs 1.078 → 1.148 → 1.190 across 20 → 80 µm and only flattens by
 120–140 µm (1.2044 → 1.2071). Both v1 and v2 inherit this systematic, because
 both fix the column at r = 0.012 cm — a constant hardcoded in
 `hadrons/python/continuous_beam.py` (`r_cm = 0.012`) and carried into the
@@ -207,9 +212,13 @@ than the entire disagreement between the codes.
 | electrodes | zero at the ends of a 5-voxel gas buffer *beyond* each electrode | **zero Dirichlet on the electrode plane itself** |
 
 The diffusion length over the 667 µs run is √(2Dt) ≈ 70 µm, comparable to the
-80–120 µm domain radius — so the side-wall condition is a first-order effect
-here, not a detail. The two codes disagree on it in the strongest possible way:
-one absorbs, the other reflects.
+80–120 µm domain radius — so I expected the side-wall condition to be a
+first-order effect. **It is not: measured, it changes k_s by 1.4e-5.** See
+§5.2, which corrects this ranking and shows where the change does pay off
+(a smaller buffer, and removing a frozen-charge artifact in v1).
+
+The two codes still disagree on it in the strongest possible way: one absorbs,
+the other reflects.
 
 The electrode condition also differs: v2 clamps n = 0 exactly at the collecting
 plane, which imposes an artificial steep gradient and an extra diffusive flux
@@ -229,6 +238,11 @@ radius — including the tails of tracks that landed near the edge, whose
 injected charge is under-counted from the start. v2 scores everything,
 including the initially-empty 0.084 → 0.12 mm annulus that fills by diffusion
 and dilutes the density there.
+
+**Measured: 0.8 % on k_s** (1.0927 → 1.0837), and it does *not* explain the
+radius systematic of §3. Now selectable via `scoring_region`, defaulting to
+v1's — see §5.3 for why v2's variant is a reproduction knob rather than an
+improvement.
 
 ### 4.7 Time discretisation and stabilisation
 
@@ -335,72 +349,214 @@ macropulse one.
 
 ---
 
-## 5. Net effect on the comparison
 
-At the archive's own geometry, this repository gives **k_s = 1.1903** under the
-as-run density convention, against the archive's **1.1629** — 2.4 % apart. That
-residual is small relative to several of the individual differences above
-(§4.1 mobility model, §4.5 boundary conditions, §4.7 Courant > 2), which
-suggests partial cancellation rather than genuine agreement. Under the nominal
-density convention the two are not comparable at all (1.1034 vs 1.1629, §4.4).
+## 5. What was ported into this repository
 
-Ranked by what is worth resolving first:
+Everything below is implemented in `pulsed_ion_chamber/` on this branch, on the
+**regular rectangular grid** — no finite elements, no unstructured mesh. Every
+new knob defaults to the original v1 behaviour, so existing configs, tests and
+the `theory.py` Jaffe cross-check are bit-for-bit unchanged
+(`tests/test_v2_physics.py::test_defaults_are_the_v1_single_averaged_species`).
 
-1. **§4.4 dose convention** — moves k_s by 8 %, and is a documented
-   inconsistency in v2 rather than a modelling choice. Resolve by agreeing which
-   density is being compared before anything else.
-2. **§4.7 Courant number** — cheap to test: rerun one archived case at v2's own
-   suggested dt.
-3. **§4.5 lateral boundary condition** — absorbing vs. reflecting, at a radius
-   comparable to the diffusion length. Testable in this repo by varying
-   `buffer_radius`.
-4. **§4.1 mobility model** — the largest structural difference, and the most
-   expensive to change.
-5. **§4.2 / §4.3 W and ρ_air** — 3.6 % and 5.6 % on charge density and track
-   count respectively; trivially reconcilable once someone decides which values
-   the comparison should use.
+| § | Change | New config field | Default |
+|---|---|---|---|
+| 4.1 | two carrier species, resolved separately | `mu_positive_cm2_Vs`, `mu_negative_cm2_Vs`, `D_positive_cm2_s`, `D_negative_cm2_s` | `None` → v1's averaged pair |
+| 4.2 | W as an input rather than a constant | `W_eV` | `34.2` (v1's PDE value) |
+| 4.3 | air reference density as an input | `air_density_kg_m3` | `1.225` (v1's ISA value) |
+| 4.4 | v2's track-count / track-placement split | `chamber_fill_fraction` | `1.0` (self-consistent) |
+| 4.5 | zero-flux chamber wall | `lateral_boundary` | `"absorbing"` |
+| 4.6 | score the whole grid, not just the track disc | `scoring_region` | `"track_disc"` |
+| 4.11 | collection tail from the slowest carrier | *(existing)* `n_clearance_separation_times` | `2.0`; use `2.6` for v2's rule |
+| 2 | `no_xy` rounds instead of truncating | — | fixed outright |
 
-## 6. Proposed implementation
+### 5.1 Two carrier species (§4.1)
 
-Confirmed with the user: **nominal** dose convention (§4.4), and physics
-constants promoted to explicit config knobs.
+`SimulationConfig.scheme_coefficients()` now returns a *pair* of Lax-Wendroff
+stencils, one per species, each built from its own `s = D dt/h²` and
+`c = µ E dt/h`. The three solvers take eight scalars instead of four; the
+per-voxel cost is unchanged (the same seven multiply-adds per carrier).
 
-### `pulsed_ion_chamber/config.py`
-New optional fields, defaults preserving current behaviour exactly:
+Two knock-on effects, both handled in `config.py`:
 
-- `air_density_kg_m3: float = AIR_DENSITY_KG_M3` (1.225) → 1.293 for this campaign
-- `W_eV: float = W_EV_PER_ION_PAIR` (34.2) → 33 for this campaign; feeds `N0 = LET_eV_cm / W_eV`
-- `chamber_fill_fraction: float = 1.0` — mirrors v2's `track_source.chamber_fill_fraction`:
-  track count from the full scored column, positions drawn inside `fill × radius`.
-  Not used by the primary config; needed to *reproduce* §4.4 as a documented
-  sensitivity check rather than a magic dose number.
-- `no_xy`: round with tolerance instead of truncating, so `sampled_radius_cm` is honoured
-- derive `sampling_radius` / `sampling_radius_sq` (track placement) separately from
-  `inner_radius_sq` (scoring)
+- **`dt` is now the stricter of the two von Neumann limits.** The negative ion
+  binds — it is both faster (µ = 2.10 vs 1.36) and more diffusive (D = 4.35e-2
+  vs 2.82e-2) — dropping `dt` from 3.826e-7 s to **3.043e-7 s** (−20 %) on the
+  10 µm grid.
+- **The clearance period is now sized by the *slowest* carrier**
+  (`slowest_mobility_cm2_Vs`), because the positive ion is the one still in
+  flight. Combined with `n_clearance_separation_times=2.6` this reproduces v2's
+  127.45 µs tail.
 
-### Other modules
-- `stopping_power.py`: `dose_rate_to_fluence_rate(..., air_density_kg_m3=None)`
-- `pulses.py`, `solver.py`, `solver_numba.py`, `solver_numba_parallel.py`: pass
-  `config.sampling_radius` to `sample_xy_inside_cylinder`; scoring keeps
-  `inner_radius_sq`. Four one-line call-site changes, no kernel signature changes.
+Together: **1 622 → 2 194 time steps (+35 %)** for the archive case. See §7.
 
-### `examples/ifj_aic144/run_markus_2mm.py`
+Measured effect on the answer: **k_s 1.0967 → 1.0927, −0.4 %.** The two
+competing effects predicted in §4.1 do largely cancel, and the net sign is
+*less* recombination — the faster separation wins over the lingering positive
+cloud.
 
-```python
-MARKUS_2MM_MACROPULSE_10GYS = dict(
-    E_MeV_u=56.2, voltage_V=300.0, electrode_gap_cm=0.2,   # 150 kV/m, as archived
-    pulse_duration_s=540e-6, repetition_rate_hz=50.0,      # 540 us / 20 ms, duty 1/37
-    n_pulses=1, rf_frequency_hz=26.26e6,
-    dose_rate_Gy_s=8.91,          # 10 Gy/s to water x 0.891 water->air => 0.1782 Gy/pulse
-    air_density_kg_m3=1.293, W_eV=33.0,                    # archive values
-    seed=20260527,                                         # archive seed
-)
-```
+### 5.2 Zero-flux chamber wall (§4.5)
 
-with the four grid tiers of §3 (`DEV`, `ARCHIVE_GEOMETRY`, `CONVERGED`,
-`PRODUCTION`). LET and the 20 µm track radius need no override — see §4.9 for
-why that is luck rather than agreement.
+`solver.apply_lateral_boundary()` mirrors the interior into the outer ring
+after every step, giving a zero-gradient wall. The z ends are untouched in both
+modes: charge that drifts past the electrode buffer has been collected and
+should leave.
 
-### `tests/test_ifj_aic144_mapping.py`
-Assert LET, track radius, `no_xy`, `no_z`, dt and tracks/pulse for
-`ARCHIVE_GEOMETRY`, so the mapping cannot drift silently.
+This also fixes a genuine defect in v1. The Lax-Wendroff sweep runs
+`i, j ∈ [1, no_xy-2]`, so the outer ring is **never updated** — but track
+insertion *does* write to it. Gaussian tails therefore pile up on the ring and
+are then frozen: they never drift, never diffuse, never recombine, and keep
+feeding their inward neighbour for the rest of the run. In the archive case the
+stranded ring density ends up **5×10⁵ times** the interior density it sits next
+to. `tests/test_v2_physics.py::test_reflecting_wall_leaves_no_frozen_charge_on_the_outer_ring`
+pins this down.
+
+**Correction to §4.5's impact estimate.** I ranked this third by expected effect
+on k_s. Measured, it is nearly irrelevant *to the answer* — 1.092708 vs
+1.092693 at `buffer_radius=4`, a relative change of 1.4e-5 — because
+recombination is dominated by fresh in-disc track density during the pulse, and
+the wall sits 4 voxels beyond the track disc.
+
+Where it does pay off is **cost**, by letting the buffer shrink:
+
+| `buffer_radius` | grid | absorbing k_s | reflecting k_s | wall time |
+|---|---|---|---|---|
+| 8 (converged) | 32² | 1.092912 | 1.092912 | 5.8 s |
+| 6 | 28² | 1.092825 | 1.092825 | 4.5 s |
+| 4 | 24² | 1.092708 | 1.092693 | 2.6 s |
+| 3 | 22² | 1.093308 | **1.092921** | 2.0 s |
+| 2 | 20² | 1.099569 | 1.093302 | 1.5 s |
+| 1 | 18² | **1.191254** | 1.095392 | 1.2 s |
+
+The absorbing wall needs `buffer_radius` 4–6 to stay within 1e-4 of the
+converged value and blows up by 9 % at 1, precisely because the frozen ring
+ends up adjacent to the scored disc. The reflecting wall is within 1e-5 at 3.
+Dropping 4 → 3 shrinks the grid 24² → 22², **−21 % wall time** at equal
+accuracy.
+
+### 5.3 Scoring domain (§4.6)
+
+`scoring_region="full_grid"` widens the injected-charge and recombination
+tallies from the track disc to every voxel in the gap, matching v2's
+`∫ n dx` / `∫ α n⁺n⁻ dt dx` over its whole mesh. Implemented without touching
+the kernels: `config.scoring_radius_sq` is simply set large enough to admit
+every voxel, corners included.
+
+**Ship it as a reproduction knob, not as an improvement — and this corrects
+§4.6.** Measured, `full_grid` moves k_s from 1.0927 to 1.0837 (−0.8 %), and the
+shift is buffer-converged (1.08532 / 1.08369 / 1.08373 / 1.08375 / 1.08400 at
+`buffer_radius` 2 / 4 / 6 / 8 / 12), so it is a real, bounded edge-treatment
+difference rather than divergence. But the annulus it adds contains Gaussian
+*tails only* — no track centres — so it is systematically under-irradiated
+relative to the uniformly irradiated chamber being modelled, and including it
+biases k_s low. `track_disc` remains the better estimator and stays the
+default. This is a plausible contributor to v2's k_s sitting below this repo's.
+
+### 5.4 W, air density, fill fraction, rounding
+
+`W_eV` and `air_density_kg_m3` are plain inputs now; `dose_rate_to_fluence_rate`
+takes the density as an argument. Per your instruction the campaign config uses
+**dry air at 20 °C, 101.325 kPa = 1.2041 kg/m³** (`AIR_DENSITY_20C_KG_M3`),
+not v2's 1.293 (0 °C) and not v1's 1.225 (ISA, 15 °C). Relative to v1 that is
+1.7 % fewer tracks for the same stated dose.
+
+`chamber_fill_fraction` reproduces v2's split between the disc tracks are
+*counted* over and the disc they are *placed* in. Left at 1.0 for the campaign,
+per the nominal-dose decision.
+
+`no_xy` now rounds. `sampled_radius_cm=0.0084` at 10 µm/voxel gave an 80 µm disc
+while the track count used 84 µm; it now gives 84 µm, as asked for.
+
+## 6. What was deliberately not ported
+
+- **v2's time integration (§4.7).** Backward Euler would let `dt` float free of
+  the von Neumann limit, which is the single biggest lever on run time — but
+  v2 runs it at Courant 2.2 and mesh Péclet 36 on *unstabilised* CG1, where
+  stability is not accuracy. Porting the freedom without porting SUPG or
+  upwinding would buy speed by degrading the answer. If this is wanted later,
+  the honest version is implicit + a stabilisation term, and it should be
+  validated against the explicit scheme before being trusted.
+- **Per-track LET and track radius, tilted tracks (§4.8).** The tilt spread is
+  0.01 rad (a 5e-5 path-length effect) and the energy spread is 0.1 MeV out of
+  56.2. Both are negligible at N ≈ 2×10⁴, and 3D tilted tracks would destroy
+  the z-independence that lets track insertion hoist its entire z-loop — the
+  optimisation the whole repository is built around.
+- **v2's zero-Dirichlet electrode plane (§4.5).** v1's gas buffer beyond each
+  electrode is the numerically gentler version of the same absorbing condition,
+  and unlike v2's it does not impose an artificial density gradient right where
+  the charge is being collected.
+- **A configurable RDD.** v2 supports uniform and libamtrack models; the
+  campaign used Gaussian, which both codes already normalise identically
+  (§4.10).
+
+### The one change worth making that is *not* in v2
+
+The radius systematic (§3) survives everything above — measured, k_s still runs
+1.028 → 1.093 across 20 → 120 µm with `full_grid` + `reflecting`, essentially
+parallel to the v1 curve. So it is not caused by the wall or by the scoring
+domain. It is intrinsic to drawing tracks in a finite disc: a track near the
+edge has neighbours on one side only, so the local charge density — and hence
+`α n⁺n⁻` — is genuinely lower there, and the deficit only vanishes as the edge
+fraction does.
+
+The fix is a **periodic** lateral boundary with tracks filling the whole
+periodic cell, which makes the sampled volume a true unit cell of an infinite
+uniformly irradiated slab with no edge at all. Neither v1 nor v2 does this, so
+it is out of scope here — but it is the change that would let a much smaller
+column give the converged answer, and on an r⁴ cost curve that is worth far
+more than any of the ports above. Recommended as the next step.
+
+## 7. Execution-time report
+
+Cost model, `archive` tier, `solver_numba`: **72 % track insertion, 28 % PDE
+steps** (22 447 tracks vs 2 194 steps). Insertion is
+`O(n_tracks · no_xy² · no_z)` and the PDE sweep is
+`O(n_steps · no_xy² · no_z)`, so the split is just `n_tracks / n_steps` — and
+since `n_tracks ∝ r²` while `n_steps` is fixed, insertion dominates further as
+the column grows and as the dose rate rises.
+
+Ranked by execution-time impact:
+
+| Change | Mechanism | Effect on wall time |
+|---|---|---|
+| **Two carrier species** (§5.1) | negative ion cuts `dt` 20 %; positive ion lengthens the tail → **+35 % time steps** | **+10 %** at macropulse dose (track-dominated); **+33 %** at 1/37 of the dose (PDE-dominated). Measured: 1.90 → 2.09 s and 0.48 → 0.64 s |
+| **Reflecting wall** (§5.2) | +4.5 % per-step overhead for the mirror, but converges at `buffer_radius` 3 instead of 4–6 | **−21 % net** (2.64 s → 2.09 s at equal accuracy) |
+| **`no_xy` rounding** (§5.4) | can move `no_xy` by ±1 | ±8 % on a 24² grid, config-dependent, one-off |
+| **Air density 1.225 → 1.2041** (§5.4) | 1.7 % fewer tracks | **−1.7 %** |
+| **W, `chamber_fill_fraction`, `scoring_region`** | none change the grid, the step count or the track count | **0 %** |
+
+**The two-species change is the one to watch.** It is the only port that costs
+time, it costs it as a fixed +35 % on the step count, and that surcharge lands
+hardest exactly where there is least other work to hide it — the low-dose-rate
+`continuous` cases of the campaign, where it is the full +33 %. It is also
+unavoidable if the two species are to be resolved at all: `dt` is set by the
+von Neumann criterion, not chosen, and the negative ion's mobility and
+diffusion coefficient are both larger than the averaged values it replaces.
+
+Net for the archive case, all ports enabled: **2.63 s → 2.02 s, 23 % faster**
+than the v1 baseline, because the buffer saving more than covers the extra time
+steps. The ported physics is not a performance regression.
+
+## 8. Net effect on the comparison
+
+With all of §5 enabled at the archive geometry this repository gives
+**k_s = 1.0929** under the nominal dose convention. The archive reports
+**1.1629**, but at 2.04× this areal track density (§4.4) — the two are not
+comparable until that convention is settled, which remains the first thing to
+resolve.
+
+Contributions measured here, largest first:
+
+1. **§4.4 dose convention** — ±8 % on k_s. Still the dominant term, and a
+   documented inconsistency in v2 rather than a modelling choice.
+2. **§3 finite column radius** — 6 % across 20 → 120 µm, unresolved by any port,
+   fixable only by the periodic cell described in §6.
+3. **§4.6 scoring domain** — 0.8 %, now selectable.
+4. **§4.1 mobility model** — 0.4 %, now ported.
+5. **§4.2 / §4.3 W and ρ_air** — now inputs; 3.6 % and 1.7 % on charge density
+   and track count respectively.
+6. **§4.5 lateral boundary** — 1.4e-5 on the answer, but worth 21 % of the run
+   time.
+
+Still open and untested: **§4.7**, v2's Courant-2.2 unstabilised time
+integration. That one cannot be settled from this side — it needs one archived
+case rerun in v2 at its own suggested `dt` of 3.17e-7 s.
