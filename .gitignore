@@ -35,3 +35,7 @@ htmlcov/
 
 # Stray local tooling (not part of the project)
 /gh
+
+# Scaling-study job logs: per-run JSON is the result and is committed, the
+# Slurm stdout beside it is not.
+profiling/data/helios_scaling/logs/

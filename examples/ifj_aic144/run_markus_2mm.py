@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""IFJ PAN AIC-144: PTW Markus 23343 (2 mm gap), macropulse, 10 Gy/s.
+"""IFJ PAN AIC-144: PTW Markus 23343 (2 mm gap), macropulse, 10 Gy/s by default.
 
 Two Kanai carrier species resolved separately, dry air at 20 degC, a
 reflecting (zero-flux) chamber wall, and a collection tail sized on the
@@ -9,7 +9,8 @@ See examples/ifj_aic144/README.md for the scenario table and results,
 docs/PHYSICS.md for what every assumption means and why, and
 docs/PERFORMANCE.md for timings and scaling.
 
-Run:  python examples/ifj_aic144/run_markus_2mm.py [tier] [--threads N] [--json FILE]
+Run:  python examples/ifj_aic144/run_markus_2mm.py [tier] [--threads N]
+            [--backend auto|serial|batched] [--dose-rate-water-Gy-s R] [--json FILE]
 
 The default is one thread and the unbatched backend, which is what the tier
 table below was measured with. `--threads N` switches to the batched backend
@@ -21,6 +22,8 @@ see docs/HELIOS.md.
 
 import argparse
 import json
+import os
+import platform
 import time
 
 from pulsed_ion_chamber.config import SimulationConfig
@@ -43,14 +46,18 @@ BEAM_KWARGS = dict(
     repetition_rate_hz=50.0,  # every 20 ms -> duty cycle 1/37
     n_pulses=1,
     rf_frequency_hz=26.26e6,  # diagnostic only; see config.py on RF averaging
-    # 10 Gy/s to water x 0.891 (water->air, calibrated for this beam) gives
-    # 0.1782 Gy to air per pulse. This is the *nominal* dose: tracks fill the
-    # scored column uniformly. The archive instead counted tracks over the full
-    # 0.12 mm column while confining them to 0.7 of it, i.e. 2.04x this areal
-    # density -- set chamber_fill_fraction=0.7 to reproduce that (see README).
-    dose_rate_Gy_s=8.91,
     seed=20260527,  # archive seed (different RNG, so not track-for-track equal)
 )
+
+# Water-to-air conversion for this beam quality, calibrated for the campaign.
+# The scenario is quoted as a dose rate *to water*; the solver wants air.
+WATER_TO_AIR = 0.891
+# 10 Gy/s to water -> 8.91 Gy/s to air -> 0.1782 Gy to air per pulse. This is
+# the *nominal* dose: tracks fill the scored column uniformly. The archive
+# instead counted tracks over the full 0.12 mm column while confining them to
+# 0.7 of it, i.e. 2.04x this areal density -- set chamber_fill_fraction=0.7 to
+# reproduce that (see README).
+DEFAULT_DOSE_RATE_WATER_GY_S = 10.0
 
 # --- gas, carriers and boundary treatment (docs/PHYSICS.md sections 8, 10, 12) ---
 CHAMBER_PHYSICS_KWARGS = dict(
@@ -101,14 +108,26 @@ EDGE_DEFICIT_UM = 1.512
 INFINITE_COLUMN_KS = 1.1119
 
 
-def build_config(tier: str = DEFAULT_TIER) -> SimulationConfig:
-    """SimulationConfig for one grid tier of the Markus 2 mm macropulse case."""
+def build_config(
+    tier: str = DEFAULT_TIER,
+    dose_rate_water_Gy_s: float = DEFAULT_DOSE_RATE_WATER_GY_S,
+) -> SimulationConfig:
+    """SimulationConfig for one grid tier of the Markus 2 mm macropulse case.
+
+    ``dose_rate_water_Gy_s`` is the time-averaged dose rate *to water*, the way
+    the scenario is quoted; it is converted to air here. Raising it is the one
+    knob that changes the physics without changing the grid: track count scales
+    with it linearly, recombination with roughly its square, and the PDE sweep
+    not at all -- which makes it the cleanest way to move this problem from
+    PDE-bound to deposition-bound. 50 Gy/s is the FLASH-adjacent case.
+    """
     if tier not in GRID_TIERS:
         raise ValueError(f"Unknown tier {tier!r}; expected one of {sorted(GRID_TIERS)}.")
     sampled_radius_cm, buffer_radius = GRID_TIERS[tier]
     return SimulationConfig(
         **BEAM_KWARGS,
         **CHAMBER_PHYSICS_KWARGS,
+        dose_rate_Gy_s=dose_rate_water_Gy_s * WATER_TO_AIR,
         grid_size_um=10.0,
         sampled_radius_cm=sampled_radius_cm,
         buffer_radius=buffer_radius,
@@ -121,8 +140,9 @@ def main(
     threads: int = 1,
     json_path: str | None = None,
     backend: str = "auto",
+    dose_rate_water_Gy_s: float = DEFAULT_DOSE_RATE_WATER_GY_S,
 ) -> None:
-    config = build_config(tier)
+    config = build_config(tier, dose_rate_water_Gy_s)
     # "auto": one thread keeps the unbatched backend, so a plain run reproduces
     # the tier table; more than one needs the batched backend, the only one
     # where a thread count means anything.
@@ -133,7 +153,10 @@ def main(
     # the batched backend at `--threads 1`, not the unbatched one. Comparing
     # thread counts means holding the backend fixed.
     batched = threads != 1 if backend == "auto" else backend == "batched"
-    print(f"=== IFJ AIC-144, Markus 2 mm, macropulse, 10 Gy/s -- '{tier}' grid ===")
+    print(
+        f"=== IFJ AIC-144, Markus 2 mm, macropulse, {dose_rate_water_Gy_s:g} Gy/s to water"
+        f" -- '{tier}' grid ==="
+    )
     print(config.summary())
     backend = "solver_numba_parallel" if batched else "solver_numba"
     print(f"Backend               : {backend}, {threads} thread(s)")
@@ -172,6 +195,14 @@ def main(
                 {
                     "tier": tier,
                     "threads": threads,
+                    "dose_rate_water_Gy_s": dose_rate_water_Gy_s,
+                    "dose_rate_air_Gy_s": config.dose_rate_Gy_s,
+                    # What the process was actually allowed to run on. Recorded
+                    # because a thread count is meaningless without it -- under
+                    # Slurm the two disagree more often than not (docs/HELIOS.md).
+                    "affinity_cpus": len(os.sched_getaffinity(0)),
+                    "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+                    "hostname": platform.node(),
                     "backend": backend,
                     "wall_s": elapsed_s,
                     "f": float(result.f_t[-1]),
@@ -199,10 +230,16 @@ if __name__ == "__main__":
     )
     parser.add_argument("--json", default=None, help="also write the result as JSON")
     parser.add_argument(
+        "--dose-rate-water-Gy-s",
+        type=float,
+        default=DEFAULT_DOSE_RATE_WATER_GY_S,
+        help=f"time-averaged dose rate to water (default {DEFAULT_DOSE_RATE_WATER_GY_S})",
+    )
+    parser.add_argument(
         "--backend",
         default="auto",
         choices=("auto", "serial", "batched"),
         help="auto (default) picks by thread count; force 'batched' for a single-core baseline",
     )
     args = parser.parse_args()
-    main(args.tier, args.threads, args.json, args.backend)
+    main(args.tier, args.threads, args.json, args.backend, args.dose_rate_water_Gy_s)

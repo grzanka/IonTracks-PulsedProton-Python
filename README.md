@@ -58,6 +58,7 @@ print(result.ks)      # recombination correction factor
 | [`docs/PHYSICS.md`](docs/PHYSICS.md) | Every physical and numerical assumption, and why it is made. **Start here** for what is modelled. |
 | [`docs/ALGORITHM.md`](docs/ALGORITHM.md) | Data layout, the two hot loops, what batching means, where the parallelism is. **Start here** for how. |
 | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | Cost model, measured timings, scaling, using many cores. |
+| [`docs/BENCHMARKS-LAPTOP.md`](docs/BENCHMARKS-LAPTOP.md) | Measured wall times on a laptop, and why one thread is the right number there. |
 | [`docs/HELIOS.md`](docs/HELIOS.md) | Running on a Cyfronet Helios node: setup, how many cores to ask for, what to expect. |
 | [`pulsed_ion_chamber/README.md`](pulsed_ion_chamber/README.md) | What each module is for. |
 | [`examples/README.md`](examples/README.md) | What each example does. |
