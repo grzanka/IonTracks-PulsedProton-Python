@@ -141,9 +141,9 @@ The Classic Markus PTW 23343 collecting electrode is 5.3 mm across (r = 2.65 mm,
 grid: 60.3 M voxels, 1.9 GiB of carrier arrays, 24.6 M tracks per pulse. It has
 been run on both machines, not estimated:
 
-| | laptop, 1 core | Helios, 1 core | Helios, 128 cores |
+| | laptop, 1 core | Helios, 1 core | Helios, 32 cores |
 |---|---|---|---|
-| wall time | 768 s¹ | 593 s | **69 s** |
+| wall time | 768 s¹ | 572 s | **47 s** |
 | `k_s` | 1.111065 | 1.111065 | 1.111065 |
 
 ¹ before the optimisations of HELIOS.md §6; not re-measured since.
@@ -179,8 +179,8 @@ there are thousands of them, so fork/join and cross-NUMA barrier cost dominates.
 
 **Large grids: threads are the whole point.** The full-electrode grid is 1.9 GiB
 — DRAM-resident, and one core can pull only ~9 GB/s of a ~900 GB/s node. The
-same run is 593 s on one core and 69 s on 128, with `k_s` identical to six
-digits. Getting there needed three fixes that only matter above a few hundred
+same run is 572 s on one core and 47 s on 32, with `k_s` identical to six
+digits — 12.2×, at 38 % of ideal. Getting there needed three fixes that only matter above a few hundred
 MiB — NUMA first touch, deleting the serial copy-back, and taking per-track
 sampling out of the Python interpreter.
 

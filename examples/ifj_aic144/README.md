@@ -53,8 +53,8 @@ uniform and normal to the electrodes.
 | `wide` | 0.018 (180 µm) | 42²×210 | 113 638 | 14.5 s | 1.1035 | 1.1119 |
 | `full_electrode` | 0.265 (2.65 mm) | 536²×210 | 24 630 400 | 12.8 min¹ | 1.1111 | 1.1117 |
 
-¹ single core on a laptop; 593 s on one Helios core. The same run takes 69 s
-on 128 Helios cores, with `k_s` identical to six digits — see
+¹ single core on a laptop; 572 s on one Helios core. The same run takes 47 s
+on 32 Helios cores, with `k_s` identical to six digits — see
 [`docs/HELIOS.md`](../../docs/HELIOS.md). The full-electrode run record, with
 its collected-charge curve, is archived in
 [`results/full_electrode/`](results/full_electrode/README.md).

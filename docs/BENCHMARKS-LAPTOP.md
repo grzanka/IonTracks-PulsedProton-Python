@@ -130,7 +130,7 @@ reaches ~21 of the machine's ~29 GB/s, so the second thread is competing for
 against a resource that is already saturated.
 
 The contrast with Helios is the whole point of having two pages: there, one core
-gets ~1 % of the node's bandwidth, and the same code scales 8.6× on 128 cores
+gets ~1 % of the node's bandwidth, and the same code scales 12.2× on 32 cores
 (HELIOS.md §4). Run `./bench_laptop.sh` to put this machine's own 1/2/4/8-thread
 ladder beside it — see [`../profiling/laptop_scaling/README.md`](../profiling/laptop_scaling/README.md).
 **Whether threads help is a property of the machine, not of the code.**

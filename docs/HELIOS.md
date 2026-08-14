@@ -6,10 +6,12 @@ algorithm [ALGORITHM.md](ALGORITHM.md), for the general cost model
 [PERFORMANCE.md](PERFORMANCE.md).
 
 **The one-line answer:** for the shortest wall time on one run, ask for
-**~128 cores** (full electrode: 593 s → 69 s, 8.6×). For the most science per
-core-hour, ask for **2–8** and spend the rest of the node on independent
-replicas: sixteen 8-thread jobs do 49x the work per hour that one 128-thread job
-does. Never ask for all 190 — it is consistently slower than 128.
+**32 cores** (full electrode: 572 s → 47 s, 12.2×); 64 if the dose rate is high. For the most science per
+core-hour, ask for **8** and spend the rest of the node on independent replicas:
+24 concurrent 8-thread jobs do 12x the work per node-hour that one 128-thread
+job does. Never ask for the whole node for one run, and **always pass
+`--exclusive` for numbers you will quote** — a co-tenant on the node inflated
+this study's mid-range by up to 195 %.
 
 ---
 
@@ -63,130 +65,133 @@ srun --overlap --ntasks=1 --cpus-per-task=24 --cpu-bind=none \
 
 **Do not set `OMP_PROC_BIND` / `OMP_PLACES`.** Measured on the full-electrode
 grid at 96 threads: default placement 70 s, `OMP_PROC_BIND=spread
-OMP_PLACES=cores` **593 s** — 8.5× worse. Under `--cpu-bind=none` the OpenMP place list does not describe
+OMP_PLACES=cores` **593 s** — 8.5× worse. (Both measured on a shared node, so
+read the pair as a ratio, not as absolute times.) Under `--cpu-bind=none` the OpenMP place list does not describe
 the CPUs the step actually holds, and the runtime stacks threads onto a handful
 of cores. Leave placement to Slurm and the kernel.
 
 ## 4. How many cores to ask for
 
 Measured, AIC-144 Markus 2 mm `full_electrode` tier (536² × 210 voxels, 1.9 GiB
-of carrier arrays, 2194 steps), at two dose rates. Sixteen runs, each its own
-Slurm job on its own node, reproducible with `./submit.sh`:
+of carrier arrays, 2194 steps), at two dose rates. Sixteen runs, **one job per
+point with a whole node to itself** — `./submit.sh --exclusive`:
 
 | threads | 10 Gy/s | speed-up | eff. | 50 Gy/s | speed-up | eff. |
 |---|---|---|---|---|---|---|
-| 1 | 593 s | 1.00× | 100 % | 755 s | 1.00× | 100 % |
-| 2 | 351 s | 1.69× | 85 % | 399 s | 1.89× | 95 % |
-| 4 | 207 s | 2.87× | 72 % | 325 s | 2.32× | 58 % |
-| 8 | 195 s | 3.05× | 38 % | 370 s | 2.04× | 25 % |
-| 16 | 169 s | 3.51× | 22 % | 256 s | 2.95× | 18 % |
-| 32 | 131 s | 4.54× | 14 % | 177 s | 4.27× | 13 % |
-| 64 | 78 s | 7.56× | 12 % | 139 s | 5.41× | 8 % |
-| 128 | **69 s** | **8.63×** | 7 % | **97 s** | **7.80×** | 6 % |
+| 1 | 572 s | 1.00× | 100 % | 713 s | 1.00× | 100 % |
+| 2 | 299 s | 1.91× | 96 % | 398 s | 1.79× | 90 % |
+| 4 | 162 s | 3.53× | 88 % | 237 s | 3.01× | 75 % |
+| 8 | 91 s | 6.32× | 79 % | 149 s | 4.77× | 60 % |
+| 16 | 57 s | 9.99× | 62 % | 147 s | 4.85× | 30 % |
+| 32 | **47 s** | **12.23×** | 38 % | 102 s | 6.99× | 22 % |
+| 64 | 47 s | 12.18× | 19 % | **82 s** | **8.68×** | 14 % |
+| 128 | 49 s | 11.59× | 9 % | 83 s | 8.55× | 7 % |
 
 `k_s` is `1.111065` in all eight 10 Gy/s runs and `1.446434` in all eight at
-50 Gy/s — identical to six digits, at every thread count. The thread count
-changes the order of one float reduction and nothing else, and `collect.py`
-will not print this table until it has checked that. It is what makes the rest
-of it worth reading.
+50 Gy/s — identical to six digits at every thread count. `collect.py` will not
+print this table until it has checked that.
 
-Four things to read off it.
+**Scaling is good to about 8 threads and then decays smoothly.** 79 % of ideal
+at 8 threads, 62 % at 16. This is a memory-bandwidth-bound stencil over 1.9 GiB;
+that it parallelises this well is the whole point of the NUMA first-touch and
+copy-back work in §7.
 
-**Scaling is real but far from linear, and it is bandwidth that is missing, not
-parallelism.** Amdahl is not the binding constraint at 10 Gy/s: the phases that
-are still serial come to ~10 s of a 593 s run, which would permit ~59×. The
-measured 8.6× is what the memory controllers will give.
+**The optimum is 32 threads at 10 Gy/s and 64 at 50 Gy/s — and nothing beyond.**
+Both curves are flat from there and *rise* at 128. There is no configuration in
+which asking for the whole node helps a single run.
 
-**The curve has plateaus, and they are the memory hierarchy.** 4 → 8 threads
-buys almost nothing (207 s → 195 s): eight cores are one CCD sharing one link,
-and four already saturate it. Progress resumes only when a job spans more of
-them — 32 → 64 threads is the biggest single step in the table (131 s → 78 s).
-Cores are not what is being bought; memory controllers are.
+**Two different things stop the two curves**, and the arithmetic says which:
 
-**Per-core efficiency runs the other way, and that is the actionable half.**
-2 threads returns 85–95 % of ideal, 128 threads returns 6–7 %. A node carved
-into **sixteen 8-thread jobs** does 16 × 3.05 = 49× the work per hour that one
-128-thread job's 8.6× does. For a parameter study — seeds, dose rates,
-voltages — that is the configuration to use, as a Slurm job array. Reach for
-128 threads only when one specific answer is wanted quickly.
-
-**Do not ask for the whole node.** 190 threads measured 124 s against 128
-threads' 69 s: past one socket the threads span both, the kernels' static
-`prange` chunks stop matching where the pages live, and it gets worse. There is
-no configuration in which asking for all 190 cores is right.
-
-### A caveat on this table: the jobs were not exclusive
-
-`./submit.sh` asks for `--cpus-per-task=N`, not for a node, so Slurm is free to
-put other work on the same node — including other jobs from the same study.
-Eleven of these sixteen runs shared a node with another of our own, and for a
-benchmark that is *memory-bandwidth-bound* a co-tenant competes for precisely
-the quantity being measured.
-
-Re-measured on an uncontended node, at 50 Gy/s:
-
-| threads | in the table (shared) | uncontended | inflation |
+| | plateau | implied serial fraction | Amdahl ceiling |
 |---|---|---|---|
-| 4 | 325 s | 290 s | +12 % |
-| 8 | 370 s | 313 s | +18 % |
+| 10 Gy/s | 12.2× at 32 threads | ~5 % | ~19× |
+| 50 Gy/s | 8.7× at 64 threads | ~10 % | ~10× |
 
-So read the table as ±20 %, and do not tune against differences smaller than
-that. `./submit.sh --exclusive` gives a whole node per job and removes the
-effect, at the price of charging 192 cores to run a 1-core job — worth it for a
-number that is going to be quoted, wasteful otherwise.
+At 50 Gy/s the measured 8.7× is already at its Amdahl ceiling: the run is capped
+by the deposition work that was never threaded (§8), and no amount of bandwidth
+would help. At 10 Gy/s the ceiling is ~19× and only 12.2× is reached, so *that*
+curve is stopped by memory controllers rather than by serial code. Two different
+problems that happen to produce similarly-shaped curves.
 
-**What the re-measurement did *not* overturn is the 4 → 8 inversion at 50 Gy/s.**
-Uncontended, 8 threads (313 s) is still slower than 4 (290 s). That is real: at
-this dose rate the deposition phases are a third of the run, they parallelise
-over grid rows with an uneven number of tracks each, and adding threads inside a
-single CCD adds imbalance and synchronisation without adding bandwidth. The
-10 Gy/s column, where deposition is a tenth of the run, shows the same step as a
-plateau rather than a reversal (207 s → 195 s).
+**Per-core efficiency argues for narrow jobs.** A whole node's aggregate
+throughput, jobs × speed-up:
+
+| shape | 10 Gy/s | 50 Gy/s |
+|---|---|---|
+| 24 × 8-thread | **152×** | **114×** |
+| 12 × 16-thread | 120× | 58× |
+| 6 × 32-thread | 73× | 42× |
+| 1 × 128-thread | 12× | 9× |
+
+So a parameter study — seeds, dose rates, voltages — should be a Slurm array of
+**8-thread jobs**, which gets 12× the work per node-hour that one wide job does.
+Reach for 32–64 threads only when one specific answer is wanted quickly.
+
+### Ask for exclusive nodes, or measure something else
+
+`--cpus-per-task=N` asks Slurm for cores, not for a node, so other work lands
+beside yours — including other jobs from the same study. The first run of this
+study was not exclusive, and eleven of its sixteen jobs shared a node with
+another of our own. For a memory-bandwidth-bound benchmark a co-tenant competes
+for precisely the quantity being measured:
+
+| threads | shared node | exclusive | inflation |
+|---|---|---|---|
+| 4 | 207 s | 162 s | +28 % |
+| 8 | 195 s | 91 s | **+115 %** |
+| 16 | 169 s | 57 s | **+195 %** |
+| 32 | 131 s | 47 s | **+179 %** |
+| 128 | 69 s | 49 s | +39 % |
+
+The distortion peaks in the middle of the range, which is the worst possible
+shape: it does not merely add noise, it *moves the optimum*. Read off the shared
+numbers, 128 threads looked best and the mid-range looked like a plateau. Both
+were artefacts. **Use `./submit.sh --exclusive` for any number you intend to
+quote**; the cost is that a 1-core job books 192 cores for twelve minutes.
 
 ## 5. Dose rate: 10 vs 50 Gy/s
 
-The same grid at five times the track count. This pair separates the two halves
-of the code, because the PDE sweep does not depend on dose rate *at all* and the
-deposition phases scale linearly with it:
+The same grid at five times the track count. The pair separates the two halves
+of the code, because the PDE sweep does not depend on dose rate *at all* while
+the deposition phases scale linearly with it:
 
 | threads | 10 Gy/s | 50 Gy/s | ratio |
 |---|---|---|---|
-| 1 | 593 s | 755 s | 1.27× |
-| 2 | 351 s | 399 s | 1.14× |
-| 4 | 207 s | 325 s | 1.57× |
-| 8 | 195 s | 370 s | 1.90× |
-| 16 | 169 s | 256 s | 1.52× |
-| 32 | 131 s | 177 s | 1.35× |
-| 64 | 78 s | 139 s | 1.78× |
-| 128 | 69 s | 97 s | 1.41× |
+| 1 | 572 s | 713 s | 1.25× |
+| 2 | 299 s | 398 s | 1.33× |
+| 4 | 162 s | 237 s | 1.46× |
+| 8 | 91 s | 149 s | 1.65× |
+| 16 | 57 s | 147 s | 2.57× |
+| 32 | 47 s | 102 s | 2.18× |
+| 64 | 47 s | 82 s | 1.75× |
+| 128 | 49 s | 83 s | 1.69× |
 
-**Five times the dose costs 1.3–1.9× the time, not 5×.** That is the batched
+**Five times the dose costs 1.25× the time on one core.** That is the batched
 deposition working as designed: a step's tracks are summed into one 2D array and
-broadcast down the gap once, so the `O(no_z)` part is paid per *step* and not
-per *track* (see `solver_numba_parallel`). The PDE sweep, which is most of the
-run, does not notice the dose rate at all.
+broadcast down the gap once, so the `O(no_z)` part is paid per *step*, not per
+*track*. The PDE sweep, which is most of a single-core run, does not notice the
+dose rate at all.
 
-**But the ratio drifts upward with thread count**, from ~1.2× at low counts to
-~1.4–1.9× at high ones, and that drift is the diagnosis: the sweep parallelises
-and the leftover per-track work does not. At 128 threads the sweep has shrunk to
-a few ms/step while `_precompute_track_gaussians` — a serial NumPy `exp` over
-`n_tracks × stencil` — has not moved. Phase timing at 96 threads makes it
-explicit: that one phase is 9 % of the 10 Gy/s run and **33 %** of the 50 Gy/s
-run, level with the sweep itself.
+**But the ratio doubles as threads are added**, peaking at 2.6× around 16
+threads. That drift is the diagnosis: the sweep parallelises and the leftover
+per-track work does not. Phase timing at 96 threads makes it explicit —
+`_precompute_track_gaussians`, a serial NumPy `exp` over `n_tracks × stencil`,
+is 9 % of the 10 Gy/s run and **33 %** of the 50 Gy/s one, level with the sweep
+itself (§8).
 
-**So the higher the dose rate, the lower the thread count worth asking for.**
-At 50 Gy/s, 128 threads returns 7.8× against 10 Gy/s's 8.6×, and the gap widens
-with every further core. A FLASH-regime study — high dose rate, many parameter
-points — should be a job array of 8-thread jobs, not a queue of wide ones.
+**So the higher the dose rate, the less a wide job buys.** At 50 Gy/s the best
+speed-up available is 8.7× against 10 Gy/s's 12.2×, and it needs twice the cores
+to get there. A FLASH-regime campaign should be an array of 8-thread jobs, where
+the ratio is still only 1.65×.
 
-The physics moves too, and much further than the cost: `k_s` goes from 1.1111 to
-1.4464, i.e. 10.0 % of the charge recombines at 10 Gy/s against 30.9 % at
-50 Gy/s. Five times the dose rate, three times the loss — the superlinearity
-expected from a recombination term that goes as `n₊n₋`. See PHYSICS.md.
+The physics moves much further than the cost: `k_s` goes from 1.1111 to 1.4464 —
+10.0 % of the charge recombining at 10 Gy/s against 30.9 % at 50 Gy/s. Five times
+the dose rate, three times the loss, which is the superlinearity expected of a
+recombination term in `n₊n₋`. See PHYSICS.md.
 
 ## 6. What one core costs
 
-593 s for the full electrode at 10 Gy/s, 755 s at 50 Gy/s, and **2.0 s for the
+572 s for the full electrode at 10 Gy/s, 713 s at 50 Gy/s, and **2.0 s for the
 `archive` tier**. The same
 `archive` run takes 1.8 s on a 2024 laptop (Intel Core Ultra 5 225U), so a
 Helios core is about **10 % slower than a laptop core** on this workload. That is
@@ -276,6 +281,20 @@ everything else here preserves.
 
 ## 9. Reproducing the numbers on this page
 
+The §4 and §5 tables, from a Helios **access** node (compute nodes cannot
+submit; Slurm's error is a bare "Access/permission denied"):
+
+```bash
+./submit.sh --exclusive                        # 16 jobs, ~15 min if the queue is free
+squeue -u $USER
+python profiling/helios_scaling/collect.py     # tables, and the consistency checks
+```
+
+Drop `--exclusive` only for a rough look — see §4 for what it costs in accuracy.
+`profiling/helios_scaling/README.md` explains the job layout.
+
+The supporting measurements, from inside an interactive allocation:
+
 ```bash
 # per-phase kernel scaling, including the NUMA first-touch comparison (~3 min)
 srun --overlap --ntasks=1 --cpus-per-task=190 --cpu-bind=none \
@@ -283,14 +302,15 @@ srun --overlap --ntasks=1 --cpus-per-task=190 --cpu-bind=none \
   --threads 1,8,24,48,96,190 --init both \
   --json profiling/data/bench_kernels_full_electrode.json
 
-# whole-run thread scaling on the full electrode (~20 min)
-bash profiling/run_full_electrode_sweep.sh 8 16 24 48 96
-
-# one run with the per-phase breakdown
-srun --overlap --ntasks=1 --cpus-per-task=24 --cpu-bind=none python -c "
+# one run with the per-phase breakdown of §8
+srun --overlap --ntasks=1 --cpus-per-task=32 --cpu-bind=none python -c "
 import sys; sys.path.insert(0, 'examples/ifj_aic144')
 from run_markus_2mm import build_config
 from pulsed_ion_chamber.solver_numba_parallel import run_simulation_numba_parallel
 run_simulation_numba_parallel(build_config('full_electrode'),
-                              num_threads=24, progress=False, phase_timing=True)"
+                              num_threads=32, progress=False, phase_timing=True)"
 ```
+
+The laptop counterpart is `./bench_laptop.sh` — see
+[BENCHMARKS-LAPTOP.md](BENCHMARKS-LAPTOP.md) and
+`profiling/laptop_scaling/README.md`.

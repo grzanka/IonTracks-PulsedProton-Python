@@ -159,7 +159,7 @@ def main(
     #
     # The override matters for one real case: a single-core *baseline* for a
     # large tier. `full_electrode` on the unbatched backend would deposit
-    # m * w^2 * no_z per step and take hours, so the 593 s reference figure is
+    # m * w^2 * no_z per step and take hours, so the 572 s reference figure is
     # the batched backend at `--threads 1`, not the unbatched one. Comparing
     # thread counts means holding the backend fixed.
     batched = threads != 1 if backend == "auto" else backend == "batched"
