@@ -13,6 +13,6 @@ python examples/ifj_aic144/report.py archive           # k_s + CSV + four plots
 ```
 
 Both take a tier name (`dev`, `archive`, `standard`, `wide`, `full_electrode`)
-selecting how much of the chamber is simulated — 0.2 s to 14 minutes. See
+selecting how much of the chamber is simulated — 0.2 s to 9 minutes. See
 [`ifj_aic144/README.md`](ifj_aic144/README.md) for the scenario parameters and
 results, and `results/full_electrode/` for a committed run record.

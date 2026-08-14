@@ -95,7 +95,7 @@ GRID_TIERS = {
     "archive": (0.008, 3),  #  22^2 x 210,     22 447 tracks,    1.8 s, k_s = 1.0929 (1.7% low)
     "standard": (0.014, 3),  #  34^2 x 210,     68 744 tracks,    8.8 s, k_s = 1.1011 (1.0% low)
     "wide": (0.018, 3),  #  42^2 x 210,    113 638 tracks,   14.5 s, k_s = 1.1035 (0.8% low)
-    "full_electrode": (0.265, 3),  # 536^2 x 210, 24 630 400 tracks, 12.8 min, k_s = 1.1111 (0.1% low)
+    "full_electrode": (0.265, 3),  # 536^2 x 210, 24 630 400 tracks, 562 s, k_s = 1.1111 (0.1% low)
 }
 DEFAULT_TIER = "archive"
 

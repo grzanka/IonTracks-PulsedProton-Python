@@ -51,12 +51,14 @@ uniform and normal to the electrodes.
 | `archive` | 0.008 (80 µm) | 22²×210 | 22 447 | 1.8 s | 1.0929 | 1.1118 |
 | `standard` | 0.014 (140 µm) | 34²×210 | 68 744 | 8.8 s | 1.1011 | 1.1119 |
 | `wide` | 0.018 (180 µm) | 42²×210 | 113 638 | 14.5 s | 1.1035 | 1.1119 |
-| `full_electrode` | 0.265 (2.65 mm) | 536²×210 | 24 630 400 | 12.8 min¹ | 1.1111 | 1.1117 |
+| `full_electrode` | 0.265 (2.65 mm) | 536²×210 | 24 630 400 | 562 s¹ | 1.1111 | 1.1117 |
 
-¹ single core on a laptop; 572 s on one Helios core. The same run takes 47 s
-on 32 Helios cores, with `k_s` identical to six digits — see
-[`docs/HELIOS.md`](../../docs/HELIOS.md). The full-electrode run record, with
-its collected-charge curve, is archived in
+¹ single core on a laptop — the fastest of the three machines this code has
+been measured on, edging out a Helios core (572 s) and beating an Ares core by
+1.7× (see [`docs/BENCHMARKS-LAPTOP.md`](../../docs/BENCHMARKS-LAPTOP.md) §3).
+The same run takes 47 s on 32 Helios cores, with `k_s` identical to six
+digits — see [`docs/HELIOS.md`](../../docs/HELIOS.md). The full-electrode run
+record, with its collected-charge curve, is archived in
 [`results/full_electrode/`](results/full_electrode/README.md).
 
 **No tier is converged in column radius.** A track at the rim of the sampled

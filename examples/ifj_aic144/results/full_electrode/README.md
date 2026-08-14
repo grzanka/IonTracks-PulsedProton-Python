@@ -13,7 +13,7 @@ python examples/ifj_aic144/report.py full_electrode examples/ifj_aic144/results/
 | tracks per pulse | 24 630 400 |
 | time step | 304.3 ns (von Neumann limit, Courant 0.959) |
 | steps | 2 194 = 540 µs injection + 127.5 µs clearance |
-| wall time | 843 s (14.05 min), single thread |
+| wall time | 527.0 s (8.78 min), single thread |
 | peak RSS | ~2.0 GiB |
 | injected (each sign) | 1.7826e9 ion pairs |
 | recombined | 1.7819e8 ion pairs (10.00 %) |
