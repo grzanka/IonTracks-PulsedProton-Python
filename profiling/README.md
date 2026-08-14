@@ -14,11 +14,11 @@ Both are self-contained and have their own README:
 
 | | |
 |---|---|
-| [`helios_scaling/`](helios_scaling/README.md) | Thread scaling on a Helios node, 1–128 cores, two dose rates. Submit with `./submit.sh` from an access node. |
+| [`cluster_scaling/`](cluster_scaling/README.md) | Thread scaling on a Helios node, 1–128 cores, two dose rates. Submit with `./submit.sh` from an access node. |
 | [`laptop_scaling/`](laptop_scaling/README.md) | The same runs on a hybrid laptop CPU, 1–8 cores, pinned to known core types. Run with `./bench_laptop.sh`. |
 
 Their results are read by the same collector,
-[`helios_scaling/collect.py`](helios_scaling/collect.py), which checks a study
+[`cluster_scaling/collect.py`](cluster_scaling/collect.py), which checks a study
 for self-consistency before it will tabulate it.
 
 ## Phase 1: raw profiling & scientific-validation data

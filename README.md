@@ -62,11 +62,12 @@ Index: [`docs/README.md`](docs/README.md) — what each document answers.
 | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | Cost model, measured timings, scaling, using many cores. |
 | [`docs/BENCHMARKS-LAPTOP.md`](docs/BENCHMARKS-LAPTOP.md) | Measured wall times on a laptop, and why one thread is the right number there. |
 | [`docs/HELIOS.md`](docs/HELIOS.md) | Running on a Cyfronet Helios node: setup, how many cores to ask for, what to expect. |
+| [`docs/BENCHMARKS-ARES.md`](docs/BENCHMARKS-ARES.md) | The same on Cyfronet Ares — hardware and predictions in place, results still to be measured. |
 | [`pulsed_ion_chamber/README.md`](pulsed_ion_chamber/README.md) | What each module is for. |
 | [`examples/README.md`](examples/README.md) | What each example does. |
 | [`tests/README.md`](tests/README.md) | What each test file pins down. |
 | [`profiling/README.md`](profiling/README.md) | Profiling harness and the raw data it produced. |
-| [`profiling/helios_scaling/README.md`](profiling/helios_scaling/README.md) | The Helios thread-scaling study — `./submit.sh`. |
+| [`profiling/cluster_scaling/README.md`](profiling/cluster_scaling/README.md) | The cluster thread-scaling study (Helios, Ares) — `./submit.sh`. |
 | [`profiling/laptop_scaling/README.md`](profiling/laptop_scaling/README.md) | The laptop scaling benchmark — `./bench_laptop.sh`. |
 
 Two results worth knowing before trusting a number:

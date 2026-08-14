@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Submit the Helios thread-scaling study. Run this on a Helios access node:
+# Submit the cluster thread-scaling study. Run this on a Helios or Ares access
+# node -- the machine is detected and its settings come from
+# profiling/cluster_scaling/sites.sh:
 #
 #     ./submit.sh
 #
-# That is the whole interface. It checks the environment, submits 16 independent
-# jobs -- one per (thread count, dose rate) over 1..128 threads and 10/50 Gy/s
-# to water on the full-electrode grid -- and prints the two commands you need
-# afterwards: one to watch the queue, one to read the results.
+# That is the whole interface. It checks the environment, submits one job per
+# (thread count, dose rate) at 10 and 50 Gy/s to water on the full-electrode
+# grid, and prints the two commands you need afterwards: one to watch the
+# queue, one to read the results. The thread ladder follows the machine:
+# 1..128 on Helios, 1..48 on Ares, chosen at its NUMA and socket boundaries.
 #
 # Nothing computes here; the jobs do. They are independent, so on an empty queue
 # they run concurrently and the study is done in ~15 minutes -- the length of
@@ -23,20 +26,21 @@
 #                                     competes for the very thing being measured.
 #   ./submit.sh --dry-run             print what would be submitted, submit nothing
 #
-# Results land in profiling/data/helios_scaling/ as one JSON per run, with
+# Results land in profiling/data/cluster_scaling/ as one JSON per run, with
 # job logs under logs/. See docs/HELIOS.md for what the numbers mean.
 
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")" && pwd)"
 
-THREAD_COUNTS="1 2 4 8 16 32 64 128"
+THREAD_COUNTS="${THREAD_COUNTS:-}"  # empty = take the site's ladder
 DOSE_RATES="50 10"
-ACCOUNT="${ACCOUNT:-plgccbmc15-cpu}"
+SITE="${SITE:-}"
+ACCOUNT="${ACCOUNT:-}"
 # Per job, not per core. The plgrid partition hands out DefMemPerCPU=1536 MB, so
 # a 1-core job would otherwise get 1.5 GB against a measured peak of ~2.1 GiB
 # and be OOM-killed -- the grid does not shrink when the thread count does.
 MEM="${MEM:-8G}"
-EXCLUSIVE="${EXCLUSIVE:-0}"
+EXCLUSIVE="${EXCLUSIVE:-}"          # empty = take the site default
 DRY_RUN=0
 
 while [ $# -gt 0 ]; do
@@ -46,6 +50,8 @@ while [ $# -gt 0 ]; do
     --account) ACCOUNT="$2";       shift 2 ;;
     --mem)     MEM="$2";           shift 2 ;;
     --exclusive) EXCLUSIVE=1;      shift ;;
+    --shared)    EXCLUSIVE=0;      shift ;;
+    --site)      SITE="$2";        shift 2 ;;
     --dry-run) DRY_RUN=1;          shift ;;
     -h|--help) sed -n '2,30p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
@@ -67,12 +73,31 @@ command -v sbatch >/dev/null || fail "sbatch not found -- is this a Slurm login 
 [ -f "${REPO}/examples/ifj_aic144/run_markus_2mm.py" ] || fail "run from the repository root"
 
 if [ "$DRY_RUN" = "1" ]; then
+  # Resolve the site config rather than printing "site default": the point of a
+  # dry run is to see the account, partition and ladder that would actually be
+  # used, on a machine where getting one of them wrong wastes a queue slot.
+  # shellcheck source=profiling/cluster_scaling/sites.sh
+  source "${REPO}/profiling/cluster_scaling/sites.sh"
+  resolved_site="${SITE:-$(site_detect)}"
+  if ! site_configure "$resolved_site"; then
+    echo "dry run -- unknown site '${resolved_site}'." >&2
+    echo "Pass --site helios|ares, or add a branch to" >&2
+    echo "profiling/cluster_scaling/sites.sh." >&2
+    exit 2
+  fi
   echo "dry run -- nothing will be submitted"
-  echo "threads : ${THREAD_COUNTS}"
-  echo "rates   : ${DOSE_RATES} Gy/s to water"
-  echo "account : ${ACCOUNT}"
-  echo "memory  : ${MEM} per job"
-  echo "exclusive: $([ "$EXCLUSIVE" = "1" ] && echo yes || echo no)"
+  echo "site      : ${SITE_NAME} (${resolved_site}), ${SITE_CORES_PER_NODE} cores/node"
+  echo "modules   : ${SITE_MODULES:-none}"
+  echo "account   : ${ACCOUNT:-$SITE_ACCOUNT}"
+  echo "partition : ${SITE_PARTITION}"
+  echo "threads   : ${THREAD_COUNTS:-$SITE_THREADS}"
+  echo "rates     : ${DOSE_RATES} Gy/s to water"
+  echo "memory    : ${MEM} per job"
+  echo "exclusive : $([ "${EXCLUSIVE:-$SITE_EXCLUSIVE}" = "1" ] && echo yes || echo no)"
+  echo "results   : profiling/data/${resolved_site}_scaling/"
+  n_jobs=0
+  for _ in ${THREAD_COUNTS:-$SITE_THREADS}; do for _ in $DOSE_RATES; do n_jobs=$((n_jobs+1)); done; done
+  echo "would submit ${n_jobs} jobs"
   exit 0
 fi
 
@@ -83,6 +108,12 @@ if [ -n "${SLURM_JOB_ID:-}" ]; then
 fi
 
 # --- submit -----------------------------------------------------------------
-THREAD_COUNTS="${THREAD_COUNTS}" DOSE_RATES="${DOSE_RATES}" \
-ACCOUNT="${ACCOUNT}" MEM="${MEM}" EXCLUSIVE="${EXCLUSIVE}" \
-  bash "${REPO}/profiling/helios_scaling/submit_all.sh"
+# Only export the overrides that were actually given; anything empty falls
+# through to the site defaults in sites.sh.
+env \
+  ${SITE:+SITE="${SITE}"} \
+  ${THREAD_COUNTS:+THREAD_COUNTS="${THREAD_COUNTS}"} \
+  ${ACCOUNT:+ACCOUNT="${ACCOUNT}"} \
+  ${EXCLUSIVE:+EXCLUSIVE="${EXCLUSIVE}"} \
+  DOSE_RATES="${DOSE_RATES}" MEM="${MEM}" \
+  bash "${REPO}/profiling/cluster_scaling/submit_all.sh"

@@ -30,7 +30,7 @@
 #   - do not use the machine while it runs.
 #
 # Results: profiling/data/laptop_scaling/<ladder>/threads{N}_dose{R}.json
-# Read them with:  python profiling/helios_scaling/collect.py <dir>
+# Read them with:  python profiling/cluster_scaling/collect.py <dir>
 
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")" && pwd)"
@@ -146,5 +146,5 @@ fi
 
 echo
 echo "=== all done ==="
-echo "collect:  python profiling/helios_scaling/collect.py profiling/data/laptop_scaling/perf"
+echo "collect:  python profiling/cluster_scaling/collect.py profiling/data/laptop_scaling/perf"
 echo "compare:  docs/BENCHMARKS-LAPTOP.md  and  docs/HELIOS.md"

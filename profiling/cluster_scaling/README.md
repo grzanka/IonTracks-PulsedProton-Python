@@ -1,13 +1,36 @@
-# Helios thread-scaling study
+# Cluster thread-scaling study
 
-Wall time of the full-electrode grid against thread count, at two dose rates.
-Produces the tables in [`docs/HELIOS.md`](../../docs/HELIOS.md) §4 and §5.
+Wall time of the full-electrode grid against thread count, at two dose rates,
+on an HPC node. Produces the tables in [`docs/HELIOS.md`](../../docs/HELIOS.md)
+§4–§5 and [`docs/BENCHMARKS-ARES.md`](../../docs/BENCHMARKS-ARES.md) §6.
 
 ```bash
-./submit.sh                                   # from a Helios ACCESS node
+./submit.sh --dry-run                          # confirm the detected machine
+./submit.sh                                    # from a Helios or Ares ACCESS node
 squeue -u $USER
-python profiling/helios_scaling/collect.py    # once the queue drains
+python profiling/cluster_scaling/collect.py profiling/data/<site>_scaling
 ```
+
+## One study, several machines
+
+Everything machine-specific lives in [`sites.sh`](sites.sh) — module line,
+account, partition, thread ladder, and whether whole nodes are reserved by
+default. The job script and the submitter are identical everywhere, so adding a
+cluster is a new `case` branch rather than a second copy of the study.
+
+| | Helios | Ares |
+|---|---|---|
+| node | 2 × EPYC 9654, 192 cores | 2 × Xeon 8268, 48 cores |
+| NUMA | 8 domains × 24, contiguous ids | 4 domains × 12, **interleaved ids** |
+| ladder | 1 2 4 8 16 32 64 128 | 1 2 4 8 **12 24 48** |
+| exclusive by default | no | **yes** |
+| results | `profiling/data/helios_scaling/` | `profiling/data/ares_scaling/` |
+
+The ladders differ because the boundaries do: powers of two on Helios, and on
+Ares the NUMA domain (12), socket (24) and node (48), which is where its curve
+should bend. Exclusive is the Ares default because a co-tenant takes a larger
+share of a smaller bandwidth pool *and* changes which NUMA domains the job's
+CPUs come from — see `docs/BENCHMARKS-ARES.md` §4.
 
 That is the whole workflow. `./submit.sh` lives at the repository root because
 it is the only command anyone needs to remember; everything here is what it
@@ -36,7 +59,7 @@ direct measurement of how much serial work is left in deposition.
 | `scaling_job.sbatch` | The job itself: loads the module, asserts its CPU affinity matches what it asked for, then runs. |
 | `collect.py` | Reads the JSONs into tables — and refuses to print them until it has checked that `k_s` agrees across thread counts and that every run had the CPUs it claimed. |
 
-Results: `profiling/data/helios_scaling/threads{N}_dose{R}.json`, job logs in
+Results: `profiling/data/cluster_scaling/threads{N}_dose{R}.json`, job logs in
 `logs/` beside them.
 
 ## Why 16 separate jobs

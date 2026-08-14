@@ -21,7 +21,7 @@ same JSON with extra fields, and checks the two conditions that quietly ruin a
 laptop measurement: running on battery, and thermal throttling part-way through
 a ladder. Both show up as a speed-up curve, not as an error.
 
-Usage:  python profiling/helios_scaling/collect.py [results_dir]
+Usage:  python profiling/cluster_scaling/collect.py [results_dir]
 """
 
 import glob
@@ -154,7 +154,7 @@ def compare(by_rate: dict) -> None:
 
 
 def main() -> int:
-    default = os.path.join(os.path.dirname(__file__), "..", "data", "helios_scaling")
+    default = os.path.join(os.path.dirname(__file__), "..", "data", "cluster_scaling")
     results_dir = sys.argv[1] if len(sys.argv) > 1 else default
     rows = load(results_dir)
     if not rows:

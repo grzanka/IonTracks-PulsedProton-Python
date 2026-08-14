@@ -30,45 +30,45 @@
 
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
-OUTDIR="${REPO}/profiling/data/helios_scaling"
+
+# Everything cluster-specific -- modules, account, partition, the thread ladder
+# and whether exclusive is the default -- comes from sites.sh, so this file is
+# the same on every machine.
+# shellcheck source=sites.sh
+source "${REPO}/profiling/cluster_scaling/sites.sh"
+SITE="${SITE:-$(site_detect)}"
+if ! site_configure "$SITE"; then
+  echo "unknown site '${SITE}'. Set SITE=helios or SITE=ares, or add a branch" >&2
+  echo "to profiling/cluster_scaling/sites.sh for this machine." >&2
+  exit 2
+fi
+
+# Results per site, so two clusters do not overwrite each other's numbers --
+# the file name carries the thread count and dose rate but not the machine, and
+# a mixed directory is a table nobody can interpret.
+OUTDIR="${OUTDIR:-${REPO}/profiling/data/${SITE}_scaling}"
 LOGDIR="${OUTDIR}/logs"
 
-ACCOUNT="${ACCOUNT:-plgccbmc15-cpu}"
-PARTITION="${PARTITION:-plgrid}"
+ACCOUNT="$SITE_ACCOUNT"
+PARTITION="$SITE_PARTITION"
 MEM="${MEM:-8G}"                      # vs ~2.1 GiB measured peak RSS
-# Whole node per job. Off by default because it charges 192 cores to run a
-# 1-core job; on for a definitive measurement, because this benchmark is
-# memory-bandwidth-bound and a co-tenant on the same node competes for exactly
-# the resource being measured. Measured symptom of leaving it off: the 8-thread
-# 50 Gy/s point landed on a node already running a 64-thread job of ours and
-# came out slower than the 4-thread point.
-EXCLUSIVE="${EXCLUSIVE:-0}"
+# Whole node per job; the default is per-site (sites.sh). Off on Helios because
+# it charges 192 cores to run a one-core job, on everywhere smaller. This
+# benchmark is memory-bandwidth-bound, so a co-tenant competes for exactly the
+# resource being measured: leaving it off on Helios inflated the mid-range of
+# the study by up to 195 %.
+EXCLUSIVE="$SITE_EXCLUSIVE"
 DOSE_RATES="${DOSE_RATES:-50 10}"
-THREAD_COUNTS="${THREAD_COUNTS:-1 2 4 8 16 32 64 128}"
+THREAD_COUNTS="$SITE_THREADS"
 
 mkdir -p "$LOGDIR"
 
-# Walltime per job, ~2x the measured run time. Only the single-core jobs need
-# more than the partition's 15-minute default, and they need it because one core
+# Walltimes come from sites.sh: ~2x the measured run time, with only the
+# single- and two-core jobs needing more than the partition default. One core
 # cannot be made faster by rearranging the work.
-#
-#   threads   50 Gy/s   10 Gy/s        (measured where available, else scaled
-#      1       ~13 min   ~11 min        from the 10 Gy/s curve in HELIOS.md)
-#      2        ~7        ~6
-#      4        ~4.5      ~4
-#      8        ~5        ~4.5
-#     16        ~3.7      ~3
-#     32        ~2.5      ~2.3
-#     64         1.9       1.5
-#    128         1.5       1.0
-walltime_for() {
-  case "$1" in
-    1) echo "00:30:00" ;;
-    2) echo "00:20:00" ;;
-    *) echo "00:15:00" ;;
-  esac
-}
 
+echo "site      : ${SITE_NAME} (${SITE}), ${SITE_CORES_PER_NODE} cores/node"
+echo "modules   : ${SITE_MODULES:-none}"
 echo "repo      : ${REPO}"
 echo "results   : ${OUTDIR}"
 echo "account   : ${ACCOUNT}"
@@ -81,7 +81,7 @@ echo
 
 submitted=0
 for n in $THREAD_COUNTS; do
-  walltime="$(walltime_for "$n")"
+  walltime="$(site_walltime "$n")"
   for rate in $DOSE_RATES; do
     exclusive_args=()
     [ "$EXCLUSIVE" = "1" ] && exclusive_args=(--exclusive)
@@ -96,8 +96,8 @@ for n in $THREAD_COUNTS; do
       --mem="${MEM}" \
       --time="${walltime}" \
       --output="${LOGDIR}/ks-n${n}-d${rate}-%j.out" \
-      --export=ALL,THREADS="${n}",DOSE_RATES="${rate}",OUTDIR="${OUTDIR}",REPO="${REPO}" \
-      "${REPO}/profiling/helios_scaling/scaling_job.sbatch")
+      --export=ALL,THREADS="${n}",DOSE_RATES="${rate}",OUTDIR="${OUTDIR}",REPO="${REPO}",SITE="${SITE}" \
+      "${REPO}/profiling/cluster_scaling/scaling_job.sbatch")
     echo "submitted ${jobid}  threads=${n}  dose=${rate} Gy/s  cpus=${n}  mem=${MEM}  walltime=${walltime}$([ "$EXCLUSIVE" = "1" ] && echo "  exclusive")"
     submitted=$((submitted + 1))
   done
@@ -108,4 +108,4 @@ echo "${submitted} jobs submitted. If the queue is empty they run concurrently,"
 echo "so expect results in ~15 minutes rather than ${submitted} x 15."
 echo
 echo "watch:    squeue -u \$USER"
-echo "collect:  python ${REPO}/profiling/helios_scaling/collect.py"
+echo "collect:  python ${REPO}/profiling/cluster_scaling/collect.py"

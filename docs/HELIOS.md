@@ -287,11 +287,11 @@ submit; Slurm's error is a bare "Access/permission denied"):
 ```bash
 ./submit.sh --exclusive                        # 16 jobs, ~15 min if the queue is free
 squeue -u $USER
-python profiling/helios_scaling/collect.py     # tables, and the consistency checks
+python profiling/cluster_scaling/collect.py     # tables, and the consistency checks
 ```
 
 Drop `--exclusive` only for a rough look — see §4 for what it costs in accuracy.
-`profiling/helios_scaling/README.md` explains the job layout.
+`profiling/cluster_scaling/README.md` explains the job layout.
 
 The supporting measurements, from inside an interactive allocation:
 

@@ -185,5 +185,5 @@ done
 echo
 echo "=== done. Collect with:"
 for ladder in $LADDERS; do
-  echo "    python profiling/helios_scaling/collect.py ${OUTROOT}/${ladder}"
+  echo "    python profiling/cluster_scaling/collect.py ${OUTROOT}/${ladder}"
 done

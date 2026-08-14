@@ -1,6 +1,6 @@
 # Laptop scaling benchmark
 
-The counterpart to [`../helios_scaling/`](../helios_scaling/): the same
+The counterpart to [`../cluster_scaling/`](../cluster_scaling/): the same
 simulation, 1–8 threads, on a hybrid laptop CPU. Produces the tables in
 [`docs/BENCHMARKS-LAPTOP.md`](../../docs/BENCHMARKS-LAPTOP.md).
 
@@ -10,7 +10,7 @@ simulation, 1–8 threads, on a hybrid laptop CPU. Produces the tables in
 ./bench_laptop.sh --stage scaling    # ~70 min: the 1/2/4/8 ladder
 ./bench_laptop.sh                    # all three
 
-python profiling/helios_scaling/collect.py profiling/data/laptop_scaling/perf
+python profiling/cluster_scaling/collect.py profiling/data/laptop_scaling/perf
 ```
 
 `./bench_laptop.sh` lives at the repository root, beside `./submit.sh`.
@@ -75,7 +75,7 @@ entire point of it.
 | `../../bench_laptop.sh` | The entry point: preflight, topology, then the stages. |
 | `topology.py` | Core-type detection and CPU-list generation. Standalone and useful on its own — `python -m profiling.laptop_scaling.topology`. |
 | `bench.sh` | The driver: pins, samples clocks and temperature during each run, folds the conditions into the result JSON. |
-| `../helios_scaling/collect.py` | Shared with the Helios study; reads either. |
+| `../cluster_scaling/collect.py` | Shared with the Helios study; reads either. |
 
 Results: `profiling/data/laptop_scaling/<ladder>/threads{N}_dose{R}.json` and
 `profiling/data/laptop_core_types/<ladder>/…`.

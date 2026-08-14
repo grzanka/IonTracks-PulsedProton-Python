@@ -2,7 +2,7 @@
 
 [↑ repository README](../README.md)
 
-Five documents, split by the question they answer. Nothing about the history
+Six documents, split by the question they answer. Nothing about the history
 of the code lives here — only its current state.
 
 | | question | read it if |
@@ -11,6 +11,7 @@ of the code lives here — only its current state.
 | [`ALGORITHM.md`](ALGORITHM.md) | **How is it implemented?** | You are reading or changing the solver. Array layout, the two hot loops, the exact identities that make deposition cheap, what "batching" means and why it is exact, and where the parallelism is. |
 | [`PERFORMANCE.md`](PERFORMANCE.md) | **What does it cost?** | You are sizing a run or wondering whether to add threads. Cost model and scaling laws, machine-independent; points at the two benchmark pages for wall times. |
 | [`BENCHMARKS-LAPTOP.md`](BENCHMARKS-LAPTOP.md) | **What does it cost *here*?** | You are running on a laptop. CPU spec, tier timings, the full-electrode run, and why one thread is the right number. |
+| [`BENCHMARKS-ARES.md`](BENCHMARKS-ARES.md) | **What does it cost on Ares?** | You are on Cyfronet Ares (2 × Xeon 8268, 48 cores, Sub-NUMA Clustering). Hardware, setup, why whole nodes are reserved there — and predictions written before the study was run. Results still TODO. |
 | [`HELIOS.md`](HELIOS.md) | **How do I run it on Helios?** | You are on a Cyfronet Helios node. Module setup, the Slurm cpuset trap, how many cores to ask for and what wall time to expect, thread and dose-rate scaling, why the big grid scales and the small one does not, and which optimisations made it slower. |
 
 Two cross-cutting results that are easy to miss:
