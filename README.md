@@ -53,23 +53,33 @@ print(result.ks)      # recombination correction factor
 
 ## Documentation
 
+Index: [`docs/README.md`](docs/README.md) — what each document answers.
+
 | | |
 |---|---|
 | [`docs/PHYSICS.md`](docs/PHYSICS.md) | Every physical and numerical assumption, and why it is made. **Start here** for what is modelled. |
 | [`docs/ALGORITHM.md`](docs/ALGORITHM.md) | Data layout, the two hot loops, what batching means, where the parallelism is. **Start here** for how. |
 | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | Cost model, measured timings, scaling, using many cores. |
+| [`docs/BENCHMARKS-LAPTOP.md`](docs/BENCHMARKS-LAPTOP.md) | Measured wall times on a laptop, and why one thread is the right number there. |
+| [`docs/HELIOS.md`](docs/HELIOS.md) | Running on a Cyfronet Helios node: setup, how many cores to ask for, what to expect. |
+| [`docs/BENCHMARKS-ARES.md`](docs/BENCHMARKS-ARES.md) | The same on Cyfronet Ares — and why its cores lose to Helios's by 1.7× despite a higher clock. |
 | [`pulsed_ion_chamber/README.md`](pulsed_ion_chamber/README.md) | What each module is for. |
 | [`examples/README.md`](examples/README.md) | What each example does. |
 | [`tests/README.md`](tests/README.md) | What each test file pins down. |
 | [`profiling/README.md`](profiling/README.md) | Profiling harness and the raw data it produced. |
+| [`profiling/cluster_scaling/README.md`](profiling/cluster_scaling/README.md) | The cluster thread-scaling study (Helios, Ares) — `./submit.sh`. |
+| [`profiling/laptop_scaling/README.md`](profiling/laptop_scaling/README.md) | The laptop scaling benchmark — `./bench_laptop.sh`. |
 
 Two results worth knowing before trusting a number:
 
 - **`k_s` is biased low by the finite simulated column**, falling only as
   `1/radius`, and no affordable radius removes it. Correct for it rather than
   enlarging the grid — `docs/PHYSICS.md` §14.
-- **More threads usually will not help.** Both hot loops are
-  memory-bandwidth-bound. Measure before assuming — `docs/PERFORMANCE.md` §6.
+- **Whether threads help depends on whether the grid fits in cache.** Both hot
+  loops are memory-bandwidth-bound. A small grid is already saturated on one
+  core and gets slower with more; a grid larger than the machine's L3 scales
+  well — the full electrode is 572 s on one Helios core and 47 s on 32, same
+  `k_s` to six digits. `docs/PERFORMANCE.md` §6, `docs/HELIOS.md`.
 
 ## Provenance and scope
 

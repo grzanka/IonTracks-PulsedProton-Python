@@ -1,0 +1,13 @@
+{
+  "tier": "full_electrode",
+  "threads": 48,
+  "backend": "solver_numba_parallel",
+  "wall_s": 96.85136715020053,
+  "f": 0.9000373222386698,
+  "ks": 1.1110650361839354,
+  "ks_corrected": 1.1116356022216711,
+  "no_xy": 536,
+  "no_z_with_buffer": 210,
+  "total_time_steps": 2194,
+  "tracks_per_pulse": 24630400
+}

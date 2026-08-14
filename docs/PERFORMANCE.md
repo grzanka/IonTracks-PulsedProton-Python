@@ -1,12 +1,20 @@
 # Execution time
 
-Cost model, measured timings and scaling for `pulsed_ion_chamber`. The physics
+**Cost model and scaling laws** for `pulsed_ion_chamber` -- what a run costs as
+a function of the knobs, independent of the machine it runs on. The physics
 these numbers correspond to is described in [PHYSICS.md](PHYSICS.md), and the
 implementation they measure in [ALGORITHM.md](ALGORITHM.md).
 
-All timings are single-threaded on one development machine (`solver_numba` or
-`solver_numba_parallel` with `num_threads=1`), excluding one-off JIT
-compilation. Treat them as ratios and orders of magnitude, not as a benchmark.
+**Measured wall times live on the machine pages**, because they are properties
+of a machine and not of this code:
+
+| | |
+|---|---|
+| [BENCHMARKS-LAPTOP.md](BENCHMARKS-LAPTOP.md) | Intel Core Ultra 5 225U. Tier timings, the full-electrode run, why one thread is the right number there. |
+| [HELIOS.md](HELIOS.md) | Cyfronet Helios, dual EPYC 9654. How to run it, how many cores to ask for, thread scaling and dose-rate scaling. |
+
+Ratios quoted below were measured on the laptop unless stated otherwise; treat
+them as ratios and orders of magnitude, not as a benchmark.
 
 ---
 
@@ -35,28 +43,27 @@ grows as the fourth power of the column radius.
 
 ---
 
-## 2. Reference timings
+## 2. Reference scenario
 
-AIC-144 Markus 2 mm scenario (`examples/ifj_aic144/run_markus_2mm.py`), 10 µm
-voxels, `buffer_radius=3`, two carrier species, 10 σ stencil, 2194 time steps:
+Everything below is measured on the AIC-144 Markus 2 mm scenario
+(`examples/ifj_aic144/run_markus_2mm.py`): 10 µm voxels, `buffer_radius=3`, two
+carrier species, 10 σ stencil, 2194 time steps, five grid tiers from a 30 µm
+column to the full 2.65 mm electrode.
 
-| tier | `sampled_radius_cm` | grid | tracks/pulse | wall time | k_s | edge bias |
-|---|---|---|---|---|---|---|
-| `dev` | 0.003 (30 µm) | 12²×210 | 3 157 | 0.2 s | 1.0580 | −4.9 % |
-| `archive` | 0.008 (80 µm) | 22²×210 | 22 447 | 1.8 s | 1.0929 | −1.7 % |
-| `standard` | 0.014 (140 µm) | 34²×210 | 68 744 | 8.8 s | 1.1011 | −1.0 % |
-| `wide` | 0.018 (180 µm) | 42²×210 | 113 638 | 14.5 s | 1.1035 | −0.8 % |
-| `full_electrode` | 0.265 (2.65 mm) | 536²×210 | 24 630 400 | 12.8 min | 1.1111 | −0.1 % |
+The tier table -- grid, track count, wall time, `k_s` and edge bias per tier --
+is in [BENCHMARKS-LAPTOP.md](BENCHMARKS-LAPTOP.md) §2, with the Helios
+equivalent in [HELIOS.md](HELIOS.md) §4. `k_s` is identical on both; only the
+wall times differ.
 
-Cost grows as `r²` but the finite-column bias only falls as `1/r`, so no tier is
-converged and enlarging the column is a bad way to chase the last percent. Apply
-the `1/r` correction of PHYSICS §14 instead: `archive` plus the correction beats
-`full_electrode` outright, in 1.8 s rather than 12.8 min.
+Cost grows as `r²` while the finite-column bias falls only as `1/r`, so no tier
+is converged and enlarging the column is a bad way to chase the last percent.
+Apply the `1/r` correction of PHYSICS §14 instead: `archive` plus the correction
+beats `full_electrode` outright, in seconds rather than minutes.
 
-**Backends.** `solver_numba.py` deposits one track at a time and is the
-simpler baseline. `solver_numba_parallel.py` batches a whole step's deposition
-and is the one to use for dense pulses and large grids; at `num_threads=1` it
-is otherwise equivalent, and it is what the timings above use.
+**Backends.** `solver_numba.py` deposits one track at a time and is the simpler
+baseline. `solver_numba_parallel.py` batches a whole step's deposition and is
+the one to use for dense pulses, large grids, and anything with a thread count;
+at `num_threads=1` it is otherwise equivalent.
 
 ---
 
@@ -129,98 +136,70 @@ where it is least justified.
 
 ## 5. Simulating the full electrode
 
-The Classic Markus PTW 23343 collecting electrode is 5.3 mm across
-(r = 2.65 mm, 0.2206 cm², 0.0441 cm³ of gas across the 2 mm gap). This has been
-run, not just estimated — `run_markus_2mm.py full_electrode`:
+The Classic Markus PTW 23343 collecting electrode is 5.3 mm across (r = 2.65 mm,
+0.2206 cm², 0.0441 cm³ of gas across the 2 mm gap), which is a 536 × 536 × 210
+grid: 60.3 M voxels, 1.9 GiB of carrier arrays, 24.6 M tracks per pulse. It has
+been run on both machines, not estimated:
 
-```
-grid          536 × 536 × 210 = 60.3 M voxels
-tracks/pulse  24 630 400
-time steps    2 194
-wall time     768 s = 12.8 min   (batched backend, one thread)
-peak RSS      2.02 GiB           (1.80 GiB of carrier arrays + interpreter and temporaries)
-result        f = 0.900037,  k_s = 1.111065
-```
+| | laptop, 1 core | Ares, 1 core | Helios, 1 core | Ares, 24 cores | Helios, 32 cores |
+|---|---|---|---|---|---|
+| wall time | 768 s¹ | 968 s | 572 s | 105 s | **47 s** |
+| `k_s` | 1.111065 | 1.111065 | 1.111065 | 1.111065 | 1.111065 |
 
-### Where those 768 seconds go
+¹ before the optimisations of HELIOS.md §6; not re-measured since.
 
-Each phase timed separately on the same grid, `CPU/wall = 1.00` throughout —
-this is one core, not fourteen:
+At this size the run is PDE-bound and memory-bandwidth-bound — the arrays are
+far larger than any cache and each voxel-step touches ~20 doubles. That is the
+regime where threads genuinely help, and the only one.
 
-| phase | per step | steps | total | share |
-|---|---|---|---|---|
-| Lax-Wendroff sweep | 158 ms | 2 194 | 347 s | 45 % |
-| copy-back of `_next` → current | 97 ms | 2 194 | 213 s | 28 % |
-| broadcast of the batched density | 63 ms | 1 775 | 112 s | 15 % |
-| xy rejection sampling | — | — | 60 s | 8 % |
-| track deposition (phase 1) | 16 ms | 1 775 | 28 s | 4 % |
-| **total** | | | **760 s** | vs 768 s measured |
+`k_s` is identical on every machine at every thread count, which is the check
+that makes the wall-time row worth comparing at all.
 
-The Lax-Wendroff sweep sustains **12 GB/s** on a single core (Intel Core Ultra 5
-225U), which is where a memory-bound stencil over 1.8 GiB of arrays should land.
-Nothing here is surprising once the arithmetic is done: the run streams the
-carrier arrays several times per step, and that is the whole story.
+Details: [BENCHMARKS-LAPTOP.md](BENCHMARKS-LAPTOP.md) §3 for the single-core
+phase breakdown and the memory accounting, [HELIOS.md](HELIOS.md) for the thread
+scaling and what had to change to get it, [BENCHMARKS-ARES.md](BENCHMARKS-ARES.md)
+for why the older Xeon loses by 1.7× per core despite the higher clock.
 
-Two of those rows are avoidable overhead rather than physics:
+**Is it worth running?** As a way to get an accurate `k_s`, no — an 80 µm column
+plus the `1/r` edge correction lands closer to the infinite-column limit, far
+faster (PHYSICS §14). Its value is that it *verifies* that extrapolation across
+a 15× range in radius. The true electrode geometry only becomes necessary
+alongside edge physics the model does not have — guard-ring field distortion,
+non-uniform fluence.
 
-- **The copy-back is 28 % of the run and computes nothing.** It exists because
-  the sweep writes only the interior of the `_next` arrays, so the boundary ring
-  has to be carried over. Double-buffering with a pointer swap would remove it,
-  but it is not a drop-in: under `lateral_boundary="absorbing"` the ring holds
-  accumulated state that the `_next` arrays do not have, so the swap would have
-  to copy the boundary planes explicitly — `O(X² + X·Z)` instead of `O(X²·Z)`.
-- **xy sampling is 8 %**, spent in a Python-level loop calling
-  `sample_xy_inside_cylinder` once per track — 2.4 µs each, 24.6 M times.
-  Vectorising the rejection sampling over a whole batch would recover most of it.
-
-Together they are ~35 % of this run, with no effect on the physics.
-
-### Accuracy of the estimate
-
-The cost model of §1 predicted ~18 min (2 min insertion + 16 min PDE), so it was
-**40 % conservative**. The insertion term was about right; the per-step term was
-not. Extrapolating per-step cost as `no_xy²` from a 166² grid assumes a constant
-cost per voxel, but the measured figure *improved* from 7.4 ns/voxel at 166² to
-4.9 ns/voxel at 536² — larger contiguous sweeps stream better, and the
-zero-column skip in the broadcast helps once most of the grid is quiet. Treat
-`no_xy²` extrapolation of the per-step term as an upper bound.
-
-Peak RSS came in 12 % above `config.estimated_memory_bytes`, which counts the
-four carrier arrays, the arrival-time draw and the 2D scratch but not the
-interpreter, Numba's runtime or NumPy's transient temporaries. The default
-`memory_budget_fraction = 0.8` absorbs that margin comfortably.
-
-Without the deposition stencil the insertion term alone would be ~4 h on the
-batched backend and ~16 days on the unbatched one.
-
-**What it is good for, and what it is not.** At this size the run is PDE-bound
-and memory-bandwidth-bound — the arrays are far larger than any cache and each
-voxel-step touches ~20 doubles. This is the one regime where adding threads
-should genuinely help, unlike the small grids of §6.
-
-But as a way to get an accurate `k_s` it is a poor trade. The full electrode is
-still 0.1 % below the infinite-column limit, while an 80 µm column corrected for
-the `1/r` edge deficit lands within 0.06 % of it in **1.8 seconds** — 400× faster
-and closer (PHYSICS §14). The full-electrode run's real value is that it
-*verifies* that extrapolation across a 15× range in radius. Running the true
-electrode geometry only becomes necessary alongside edge physics the model does
-not currently have — guard-ring field distortion, non-uniform fluence — at which
-point the answer would no longer be a scaled copy of the interior.
+---
 
 ## 6. Using many cores
 
-For a single run of a normal-sized scenario, **use one thread.** Measured on a
-dual-EPYC 192-core node, wall time got *worse* with more threads (22.9 s at 1
-thread, 37–44 s at 8–190 with the `omp` threading layer). After track insertion
-is batched per step, each parallel region does very little work — a few hundred
-microseconds — but there are thousands of them, and fork/join and barrier cost
-across NUMA domains dominates. Numba's `workqueue` layer has lower fixed
-overhead and does modestly better, but not reliably enough to matter.
+**It depends entirely on whether the grid fits in cache.** Both hot loops are
+memory-bandwidth-bound, so what threads buy is memory controllers — and a grid
+that lives in L3 has already got all the bandwidth it is going to get.
 
-The exceptions are large grids (§5), where each parallel region finally has
-enough work to amortise its launch cost.
+**Small grids: use one thread.** Measured on a dual-EPYC 192-core node with the
+5 µm "converged" grid (40 MiB of carrier arrays, against 768 MiB of node L3),
+wall time got *worse* with more threads: 22.9 s at 1, 37–44 s at 8–190 with the
+`omp` layer. Each parallel region does a few hundred microseconds of work and
+there are thousands of them, so fork/join and cross-NUMA barrier cost dominates.
 
-**The right way to spend many cores is independent replicas**, not threads:
+**Large grids: threads are the whole point.** The full-electrode grid is 1.9 GiB
+— DRAM-resident, and one core can pull only ~9 GB/s of a ~900 GB/s node. The
+same run is 572 s on one core and 47 s on 32, with `k_s` identical to six
+digits — 12.2×, at 38 % of ideal. Getting there needed three fixes that only matter above a few hundred
+MiB — NUMA first touch, deleting the serial copy-back, and taking per-track
+sampling out of the Python interpreter.
+
+The crossover is roughly where the carrier arrays exceed the machine's total
+L3. Below it, one thread; above it, as many as the memory controllers can feed.
+
+**It is also a property of the machine, not of this code.** The same grid that
+wants one thread on a laptop (where one core already reaches ~70 % of the
+machine's bandwidth) wants ~96 on a Helios node (where one core reaches ~1 %).
+Both pages state their own answer:
+[BENCHMARKS-LAPTOP.md](BENCHMARKS-LAPTOP.md) §4, [HELIOS.md](HELIOS.md) §4 —
+the latter also lists the optimisations that turned out to make things *worse*,
+which is the more transferable half.
+
+**For parameter studies, independent replicas beat threads either way**:
 different seeds, or a sweep over dose rate, energy and voltage, run as separate
 single-threaded processes. Measured: 64 concurrent single-threaded replicas via
 `multiprocessing.Pool(64)` finished in 69 s against ~1600 s for the same 64 runs
@@ -235,20 +214,15 @@ does, so a benchmark cannot report a thread count that never existed.
 
 ### Slurm / cpuset caveat
 
-An allocation requested as `--ntasks=N --cpus-per-task=1` hands back a shell
-whose own process is restricted to a single core, even when the whole node is
-reserved. `numba.set_num_threads()` cannot help if the OS exposes one CPU.
-Launch multi-core or multi-process work as its own step:
-
-```bash
-srun --overlap --ntasks=1 --cpus-per-task=190 --cpu-bind=none python your_script.py
-```
-
-Verify before trusting any thread-count benchmark:
+An interactive allocation hands back a shell whose own process is restricted to
+a single core, even when the whole node is reserved, so every thread count in it
+silently collapses to 1. Verify before trusting any thread-count benchmark:
 
 ```bash
 python -c "import os; print(len(os.sched_getaffinity(0)))"
 ```
+
+[HELIOS.md](HELIOS.md) §3 has the full treatment and the launch incantation.
 
 ---
 

@@ -64,6 +64,23 @@ def test_backends_draw_the_same_tracks():
     np.testing.assert_array_equal(batched.track_density_xy, serial.track_density_xy)
 
 
+@pytest.mark.parametrize("wall", ["absorbing", "reflecting"])
+def test_backends_agree_under_each_wall_condition(wall):
+    """The batched backend swaps its buffers where the serial one copies the
+    interior back, so the outer ring reaches the next step by a different route
+    in each: rewritten from the interior (reflecting) or carried across
+    explicitly (absorbing). Both routes must land on the serial answer, and the
+    field -- not just f(t) -- is what shows it, because the ring is exactly
+    where the two could differ without moving k_s much.
+    """
+    serial = run_simulation_numba(_fast_config(lateral_boundary=wall), progress=False)
+    batched = run_simulation_numba_parallel(_fast_config(lateral_boundary=wall), progress=False)
+    peak = serial.positive_array.max()
+    np.testing.assert_allclose(batched.positive_array, serial.positive_array, atol=peak * RTOL)
+    np.testing.assert_allclose(batched.negative_array, serial.negative_array, atol=peak * RTOL)
+    assert batched.ks == pytest.approx(serial.ks, rel=RTOL)
+
+
 @pytest.mark.parametrize("num_threads", [1, 2])
 def test_batched_backend_is_thread_count_independent(num_threads):
     """Thread count changes the reduction order, nothing else."""

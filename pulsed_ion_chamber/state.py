@@ -6,16 +6,19 @@ Three things both backends need, kept here so they cannot drift apart:
 * :class:`Diagnostics` -- the per-time-step record, accumulated as the run
   proceeds.
 * :func:`apply_lateral_boundary` -- the once-per-step boundary update.
+* :func:`carry_lateral_ring` -- the boundary planes a buffer swap has to carry.
 
-None of it is on the hot path (the boundary update touches four planes out of
+None of it is on the hot path (the boundary functions touch four planes out of
 a whole grid), so it is plain NumPy and plain Python: readable beats fast here.
+That is a measured claim, not an assumption -- a threaded version of the
+boundary update ran 5x *slower*; see :func:`apply_lateral_boundary`.
 """
 
 from dataclasses import dataclass
 
 import numpy as np
 
-__all__ = ["Result", "Diagnostics", "apply_lateral_boundary"]
+__all__ = ["Result", "Diagnostics", "apply_lateral_boundary", "carry_lateral_ring"]
 
 
 @dataclass
@@ -68,11 +71,17 @@ class Diagnostics:
     def count_tracks(self, xs: np.ndarray, ys: np.ndarray) -> None:
         """Record a whole time step's track centres at once.
 
-        `np.add.at` rather than fancy-index `+=` because several tracks in the
-        same step routinely land in the same voxel, and plain fancy indexing
-        would keep only the last of them instead of summing.
+        Not fancy-index `+=`: several tracks in the same step routinely land in
+        the same voxel, and plain fancy indexing would keep only the last of
+        them instead of summing. `np.add.at` does sum correctly but runs an
+        unbuffered elementwise loop, ~100 ns per track -- 2.5 s over a
+        24.6 M-track run, which is real money once the run itself is ~30 s.
+        `bincount` over the flattened index is the same sum in a tight C loop;
+        it costs one pass over the (small) 2D histogram per call instead.
         """
-        np.add.at(self.track_density_xy, (xs.astype(np.int64), ys.astype(np.int64)), 1.0)
+        flat = xs.astype(np.int64) * self.track_density_xy.shape[1] + ys.astype(np.int64)
+        counts = np.bincount(flat, minlength=self.track_density_xy.size)
+        self.track_density_xy += counts.reshape(self.track_density_xy.shape)
 
     def record(self, step, injected, recombined, total_positive, total_negative) -> None:
         self.injected[step] = injected
@@ -125,6 +134,14 @@ def apply_lateral_boundary(array: np.ndarray, mode: str) -> None:
 
     The z ends are untouched in both modes. Charge that drifts past the
     electrode buffer has been collected, and should leave.
+
+    Left as NumPy even in the threaded backend, and that is a measurement, not
+    an oversight: each assignment here is a memcpy of a contiguous 900 KiB plane
+    (or 536 contiguous 1.7 KiB rows), and a hand-written Numba `prange` version
+    doing the same work element by element measured **5x slower** on the
+    full-electrode grid -- 5.3 ms/step against 1.0 ms. Four planes are 0.4 % of
+    the grid; there is no bandwidth here worth parallelising, only memcpy to get
+    out of the way of.
     """
     if mode != "reflecting":
         return
@@ -135,3 +152,25 @@ def apply_lateral_boundary(array: np.ndarray, mode: str) -> None:
     array[-1, :, :] = array[-2, :, :]
     array[:, 0, :] = array[:, 1, :]
     array[:, -1, :] = array[:, -2, :]
+
+
+def carry_lateral_ring(dst: np.ndarray, src: np.ndarray) -> None:
+    """Copy the four lateral boundary planes from `src` into `dst`.
+
+    What makes a double-buffer swap legal under a non-reflecting wall. The
+    Lax-Wendroff sweep writes only the interior, so after a swap the new current
+    buffer's outer ring is stale. Under ``"reflecting"`` that is harmless --
+    :func:`apply_lateral_boundary` rewrites the ring from the interior every
+    step anyway -- but under ``"absorbing"`` the ring holds Gaussian tails that
+    deposition put there and that nothing ever clears, and losing them changes
+    the answer.
+
+    ``O(no_xy * no_z)`` against the sweep's ``O(no_xy**2 * no_z)``: 0.4 % of the
+    grid on the full-electrode tier. That ratio is the whole reason the batched
+    backend can swap buffers instead of copying 1.9 GiB of interior back every
+    step.
+    """
+    dst[0, :, :] = src[0, :, :]
+    dst[-1, :, :] = src[-1, :, :]
+    dst[:, 0, :] = src[:, 0, :]
+    dst[:, -1, :] = src[:, -1, :]

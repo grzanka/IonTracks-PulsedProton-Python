@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""IFJ PAN AIC-144: PTW Markus 23343 (2 mm gap), macropulse, 10 Gy/s.
+"""IFJ PAN AIC-144: PTW Markus 23343 (2 mm gap), macropulse, 10 Gy/s by default.
 
 Two Kanai carrier species resolved separately, dry air at 20 degC, a
 reflecting (zero-flux) chamber wall, and a collection tail sized on the
@@ -9,10 +9,21 @@ See examples/ifj_aic144/README.md for the scenario table and results,
 docs/PHYSICS.md for what every assumption means and why, and
 docs/PERFORMANCE.md for timings and scaling.
 
-Run:  python examples/ifj_aic144/run_markus_2mm.py [dev|archive|converged|production]
+Run:  python examples/ifj_aic144/run_markus_2mm.py [tier] [--threads N]
+            [--backend auto|serial|batched] [--dose-rate-water-Gy-s R] [--json FILE]
+
+The default is one thread and the unbatched backend, which is what the tier
+table below was measured with. `--threads N` switches to the batched backend
+(`solver_numba_parallel`) and is how the `full_electrode` tier becomes
+affordable on a cluster -- roughly 10x on ~96 cores. There it needs its own
+srun step, and the thread count that pays is not the largest one available:
+see docs/HELIOS.md.
 """
 
-import sys
+import argparse
+import json
+import os
+import platform
 import time
 
 from pulsed_ion_chamber.config import SimulationConfig
@@ -24,6 +35,7 @@ from pulsed_ion_chamber.constants import (
     ION_MOBILITY_POSITIVE_CM2_VS,
 )
 from pulsed_ion_chamber.solver_numba import run_simulation_numba, warmup
+from pulsed_ion_chamber.solver_numba_parallel import run_simulation_numba_parallel, warmup_parallel
 
 # --- beam and chamber, straight from the archived source_config.yaml ---------
 BEAM_KWARGS = dict(
@@ -34,14 +46,18 @@ BEAM_KWARGS = dict(
     repetition_rate_hz=50.0,  # every 20 ms -> duty cycle 1/37
     n_pulses=1,
     rf_frequency_hz=26.26e6,  # diagnostic only; see config.py on RF averaging
-    # 10 Gy/s to water x 0.891 (water->air, calibrated for this beam) gives
-    # 0.1782 Gy to air per pulse. This is the *nominal* dose: tracks fill the
-    # scored column uniformly. The archive instead counted tracks over the full
-    # 0.12 mm column while confining them to 0.7 of it, i.e. 2.04x this areal
-    # density -- set chamber_fill_fraction=0.7 to reproduce that (see README).
-    dose_rate_Gy_s=8.91,
     seed=20260527,  # archive seed (different RNG, so not track-for-track equal)
 )
+
+# Water-to-air conversion for this beam quality, calibrated for the campaign.
+# The scenario is quoted as a dose rate *to water*; the solver wants air.
+WATER_TO_AIR = 0.891
+# 10 Gy/s to water -> 8.91 Gy/s to air -> 0.1782 Gy to air per pulse. This is
+# the *nominal* dose: tracks fill the scored column uniformly. The archive
+# instead counted tracks over the full 0.12 mm column while confining them to
+# 0.7 of it, i.e. 2.04x this areal density -- set chamber_fill_fraction=0.7 to
+# reproduce that (see README).
+DEFAULT_DOSE_RATE_WATER_GY_S = 10.0
 
 # --- gas, carriers and boundary treatment (docs/PHYSICS.md sections 8, 10, 12) ---
 CHAMBER_PHYSICS_KWARGS = dict(
@@ -92,14 +108,35 @@ EDGE_DEFICIT_UM = 1.512
 INFINITE_COLUMN_KS = 1.1119
 
 
-def build_config(tier: str = DEFAULT_TIER) -> SimulationConfig:
-    """SimulationConfig for one grid tier of the Markus 2 mm macropulse case."""
+def build_config(
+    tier: str = DEFAULT_TIER,
+    dose_rate_water_Gy_s: float = DEFAULT_DOSE_RATE_WATER_GY_S,
+    sampled_radius_cm: float | None = None,
+) -> SimulationConfig:
+    """SimulationConfig for one grid tier of the Markus 2 mm macropulse case.
+
+    ``dose_rate_water_Gy_s`` is the time-averaged dose rate *to water*, the way
+    the scenario is quoted; it is converted to air here. Raising it is the one
+    knob that changes the physics without changing the grid: track count scales
+    with it linearly, recombination with roughly its square, and the PDE sweep
+    not at all -- which makes it the cleanest way to move this problem from
+    PDE-bound to deposition-bound. 50 Gy/s is the FLASH-adjacent case.
+
+    ``sampled_radius_cm`` overrides the tier's column radius. The tiers are a
+    ladder of *scientific* interest, and the sizes that fall between them can
+    matter for a different reason: what a benchmark needs is a grid on the
+    correct side of the machine's last-level cache, and on a laptop every named
+    tier below `full_electrode` fits in L3. Setting the radius directly is how
+    `bench_laptop.sh` gets a DRAM-resident grid that still costs minutes.
+    """
     if tier not in GRID_TIERS:
         raise ValueError(f"Unknown tier {tier!r}; expected one of {sorted(GRID_TIERS)}.")
-    sampled_radius_cm, buffer_radius = GRID_TIERS[tier]
+    tier_radius_cm, buffer_radius = GRID_TIERS[tier]
+    sampled_radius_cm = tier_radius_cm if sampled_radius_cm is None else sampled_radius_cm
     return SimulationConfig(
         **BEAM_KWARGS,
         **CHAMBER_PHYSICS_KWARGS,
+        dose_rate_Gy_s=dose_rate_water_Gy_s * WATER_TO_AIR,
         grid_size_um=10.0,
         sampled_radius_cm=sampled_radius_cm,
         buffer_radius=buffer_radius,
@@ -107,24 +144,52 @@ def build_config(tier: str = DEFAULT_TIER) -> SimulationConfig:
     )
 
 
-def main(tier: str = DEFAULT_TIER) -> None:
-    config = build_config(tier)
-    print(f"=== IFJ AIC-144, Markus 2 mm, macropulse, 10 Gy/s -- '{tier}' grid ===")
+def main(
+    tier: str = DEFAULT_TIER,
+    threads: int = 1,
+    json_path: str | None = None,
+    backend: str = "auto",
+    dose_rate_water_Gy_s: float = DEFAULT_DOSE_RATE_WATER_GY_S,
+    sampled_radius_cm: float | None = None,
+) -> None:
+    config = build_config(tier, dose_rate_water_Gy_s, sampled_radius_cm)
+    # "auto": one thread keeps the unbatched backend, so a plain run reproduces
+    # the tier table; more than one needs the batched backend, the only one
+    # where a thread count means anything.
+    #
+    # The override matters for one real case: a single-core *baseline* for a
+    # large tier. `full_electrode` on the unbatched backend would deposit
+    # m * w^2 * no_z per step and take hours, so the 572 s reference figure is
+    # the batched backend at `--threads 1`, not the unbatched one. Comparing
+    # thread counts means holding the backend fixed.
+    batched = threads != 1 if backend == "auto" else backend == "batched"
+    print(
+        f"=== IFJ AIC-144, Markus 2 mm, macropulse, {dose_rate_water_Gy_s:g} Gy/s to water"
+        f" -- '{tier}' grid ==="
+    )
     print(config.summary())
+    backend = "solver_numba_parallel" if batched else "solver_numba"
+    print(f"Backend               : {backend}, {threads} thread(s)")
     print()
 
-    warmup()  # one-off JIT compilation, excluded from the timing below
-    t0 = time.perf_counter()
-    result = run_simulation_numba(config, progress=True)
+    if batched:
+        warmup_parallel()
+        t0 = time.perf_counter()
+        result = run_simulation_numba_parallel(config, progress=True, num_threads=threads)
+    else:
+        warmup()  # one-off JIT compilation, excluded from the timing below
+        t0 = time.perf_counter()
+        result = run_simulation_numba(config, progress=True)
     elapsed_s = time.perf_counter() - t0
 
-    print(f"\nWall time (numba, single-threaded): {elapsed_s:.1f} s")
+    radius_um = config.sampled_radius_cm * 1e4
+    corrected = result.ks + EDGE_DEFICIT_UM / radius_um
+    print(f"\nWall time ({backend}, {threads} thread(s)): {elapsed_s:.1f} s")
     print(f"Collection efficiency f = {result.f_t[-1]:.4f}")
     print(f"Recombination correction k_s = 1/f = {result.ks:.4f}")
-    radius_um = config.sampled_radius_cm * 1e4
     print(
         f"Corrected for the finite-column edge deficit (+{EDGE_DEFICIT_UM / radius_um:.4f}): "
-        f"k_s -> {result.ks + EDGE_DEFICIT_UM / radius_um:.4f}"
+        f"k_s -> {corrected:.4f}"
     )
     print(
         "\nPublished IonTracks v2 (FEniCSx) result for this case: k_s = 1.1629 (exact, 1/f)"
@@ -132,6 +197,73 @@ def main(tier: str = DEFAULT_TIER) -> None:
         "\ncomparable until the density convention is reconciled; see README."
     )
 
+    if json_path:
+        # Machine-readable, so a Slurm job array or a scaling sweep can collect
+        # runs without re-parsing the text above.
+        with open(json_path, "w") as handle:
+            json.dump(
+                {
+                    "tier": tier,
+                    "sampled_radius_cm": config.sampled_radius_cm,
+                    "threads": threads,
+                    "dose_rate_water_Gy_s": dose_rate_water_Gy_s,
+                    "dose_rate_air_Gy_s": config.dose_rate_Gy_s,
+                    # What the process was actually allowed to run on. Recorded
+                    # because a thread count is meaningless without it -- under
+                    # Slurm the two disagree more often than not (docs/HELIOS.md).
+                    "affinity_cpus": len(os.sched_getaffinity(0)),
+                    "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+                    "hostname": platform.node(),
+                    "backend": backend,
+                    "wall_s": elapsed_s,
+                    "f": float(result.f_t[-1]),
+                    "ks": float(result.ks),
+                    "ks_corrected": float(corrected),
+                    "no_xy": config.no_xy,
+                    "no_z_with_buffer": config.no_z_with_buffer,
+                    "total_time_steps": config.total_time_steps,
+                    "tracks_per_pulse": config.number_of_tracks_per_pulse,
+                },
+                handle,
+                indent=2,
+            )
+        print(f"\nwrote {json_path}")
+
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_TIER)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("tier", nargs="?", default=DEFAULT_TIER, choices=sorted(GRID_TIERS))
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=1,
+        help="thread count for the batched backend; 1 (default) uses the unbatched one",
+    )
+    parser.add_argument("--json", default=None, help="also write the result as JSON")
+    parser.add_argument(
+        "--sampled-radius-cm",
+        type=float,
+        default=None,
+        help="override the tier's column radius (for sizing a grid against a cache)",
+    )
+    parser.add_argument(
+        "--dose-rate-water-Gy-s",
+        type=float,
+        default=DEFAULT_DOSE_RATE_WATER_GY_S,
+        help=f"time-averaged dose rate to water (default {DEFAULT_DOSE_RATE_WATER_GY_S})",
+    )
+    parser.add_argument(
+        "--backend",
+        default="auto",
+        choices=("auto", "serial", "batched"),
+        help="auto (default) picks by thread count; force 'batched' for a single-core baseline",
+    )
+    args = parser.parse_args()
+    main(
+        args.tier,
+        args.threads,
+        args.json,
+        args.backend,
+        args.dose_rate_water_Gy_s,
+        args.sampled_radius_cm,
+    )

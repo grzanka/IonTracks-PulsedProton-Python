@@ -254,9 +254,14 @@ def test_memory_estimate_matches_the_arrays_that_get_allocated():
 
 
 def test_oversized_grid_is_refused_before_it_can_be_allocated():
+    # 20 cm of column at 10 um is ~10 TiB of carrier arrays -- refused on any
+    # machine. The radius has to be that absurd for the test to mean anything
+    # everywhere: at the 2 cm it used to use, the grid is 99 GiB, which a
+    # laptop refuses and a 377 GiB Helios node cheerfully accepts, so the test
+    # passed for a reason that had nothing to do with the guard working.
     with pytest.raises(MemoryError, match="available"):
         SimulationConfig(
-            **{**SMALL, "grid_size_um": 10.0, "sampled_radius_cm": 2.0},
+            **{**SMALL, "grid_size_um": 10.0, "sampled_radius_cm": 20.0},
             max_voxels=1e14,
         )
 
