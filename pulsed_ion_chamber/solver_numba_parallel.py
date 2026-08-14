@@ -52,19 +52,42 @@ serial order in the last few ULPs because float addition is not associative.
 What does not parallelise: the time-step loop itself. Step N reads what step
 N-1 wrote.
 
-Threads are usually not the answer
-----------------------------------
+Threads help exactly when the grid is big
+-----------------------------------------
 
-Both hot loops are memory-bandwidth-bound -- they stream the whole grid. On a
-laptop-class machine a single core already reaches ~21 GB/s of a ~29 GB/s
-practical ceiling, so the sweep saturates at about 1.7x on two threads and gets
-*worse* beyond that. Measure before assuming; `num_threads` exists so callers
-can pick the measured sweet spot rather than "all of them". See
-docs/PERFORMANCE.md for the curve and for why independent replicas beat threads
-for parameter sweeps.
+Both hot loops are memory-bandwidth-bound -- they stream the whole grid -- so
+what threads buy is memory controllers, not arithmetic. That makes the answer
+depend entirely on the size of the grid relative to the machine:
+
+* **Laptop-class, or a grid that fits in cache.** A single core already reaches
+  most of the available bandwidth (~21 of ~29 GB/s on a laptop), so the sweep
+  saturates around 1.7x on two threads and gets *worse* beyond that.
+* **A NUMA server and a grid larger than its aggregate L3.** One core gets a
+  single core's share of bandwidth -- 9 GB/s of a node's ~900 GB/s on a dual
+  EPYC 9654 -- and threads scale nearly linearly until the controllers
+  saturate. Measured 25x on the full-electrode grid.
+
+Two things had to be fixed before that second case worked, and both are the
+kind of thing that shows up only above a few hundred MiB (docs/HELIOS.md has
+the measurements):
+
+**NUMA first touch.** ``np.zeros`` hands back untouched pages; Linux places
+each one on the NUMA domain of the thread that first *writes* it. If the main
+thread does that, all 1.9 GiB of carrier arrays lands behind one of eight
+memory controllers and every worker reads across the fabric from it -- the
+sweep then plateaus at 48 GB/s no matter how many threads are added.
+``_first_touch_parallel`` writes the arrays through the same flattened-(i, j)
+decomposition the kernels use, so each thread's pages are placed local to it,
+and the same sweep reaches 230 GB/s.
+
+**No serial phase.** Amdahl is unforgiving at 190 threads: the interior
+copy-back this file used to do was ~144 ms of a 354 ms step, plain NumPy, and
+would have capped the whole run at 2.5x however fast the kernels got. It is
+gone -- see the swap in ``run_simulation_numba_parallel``.
 """
 
 from math import exp
+from time import perf_counter
 from typing import Optional
 
 import numba
@@ -74,14 +97,43 @@ from numba import prange
 
 from pulsed_ion_chamber.config import SimulationConfig
 from pulsed_ion_chamber.constants import RECOMBINATION_ALPHA_CM3_S
-from pulsed_ion_chamber.pulses import build_track_schedule, sample_xy_inside_cylinder
+from pulsed_ion_chamber.pulses import CylinderSampler, build_track_schedule
 from pulsed_ion_chamber.resources import clamp_thread_count
-from pulsed_ion_chamber.state import Diagnostics, Result, apply_lateral_boundary
+from pulsed_ion_chamber.state import Diagnostics, Result, apply_lateral_boundary, carry_lateral_ring
 
 FloatArray3D = npt.NDArray[np.float64]
 FloatArray1D = npt.NDArray[np.float64]
 FloatArray2D = npt.NDArray[np.float64]
 IntArray1D = npt.NDArray[np.int64]
+
+
+@numba.njit(parallel=True, cache=True)
+def _first_touch_parallel(array: FloatArray3D) -> None:
+    """Zero the array from the threads that will later own its pages.
+
+    Not an optimisation of the zeroing -- ``np.zeros`` is already free, because
+    the kernel hands back pages that are mapped but not physically placed.
+    Placement happens on first *write*, on the NUMA domain of whichever thread
+    does it, and it is permanent for the life of the allocation. So the thread
+    that writes a page first decides which memory controller every later access
+    to it goes through.
+
+    Iterating the same flattened ``(i, j)`` index as the sweep and the
+    broadcast means thread ``t`` touches the columns thread ``t`` will later
+    read and write. On the full-electrode grid (1.9 GiB, 8 NUMA domains) this is
+    worth 4.6x on the sweep -- 41 ms/step versus 8.9 ms/step. On a
+    single-domain machine, or a grid that fits in cache, it does nothing.
+
+    Only correct while Numba's ``prange`` uses a static, contiguous schedule,
+    which it does by default (``NUMBA_PARALLEL_CHUNKSIZE`` unset). A dynamic
+    schedule would still be correct, just no longer NUMA-local.
+    """
+    no_i, no_j, no_k = array.shape
+    for idx in prange(no_i * no_j):
+        i = idx // no_j
+        j = idx % no_j
+        for k in range(no_k):
+            array[i, j, k] = 0.0
 
 
 @numba.njit(cache=True)
@@ -403,6 +455,7 @@ def warmup_parallel() -> None:
     shape = (4, 4, 4)
     p, n, p_next, n_next = (np.zeros(shape) for _ in range(4))
     total = np.zeros((4, 4))
+    _first_touch_parallel(p)
     gi, gj, li, hi, lj, hj = _precompute_track_gaussians(
         np.array([2.0]), np.array([2.0]), 4, 1.0, 1.0, 4.0
     )
@@ -414,11 +467,51 @@ def warmup_parallel() -> None:
     )
 
 
+class _PhaseTimer:
+    """Optional per-phase wall-clock accounting for one run.
+
+    Off by default and free when off. On, it costs two ``perf_counter`` calls
+    per phase per step -- ~50 ns against phases measured in milliseconds.
+
+    It exists because on a large grid the interesting question stopped being
+    "how long did it take" and became "which phase is still serial": once the
+    threaded kernels drop to a few ms, anything left in NumPy or in a Python
+    loop is what sets the wall time, and only a breakdown shows which.
+    """
+
+    def __init__(self, enabled: bool):
+        self.enabled = enabled
+        self.totals: dict[str, float] = {}
+        self._t0 = 0.0
+
+    def start(self) -> None:
+        if self.enabled:
+            self._t0 = perf_counter()
+
+    def stop(self, name: str) -> None:
+        if self.enabled:
+            self.totals[name] = self.totals.get(name, 0.0) + (perf_counter() - self._t0)
+
+    def report(self, total_time_steps: int) -> str:
+        if not self.enabled or not self.totals:
+            return ""
+        total = sum(self.totals.values())
+        lines = [f"{'phase':>22} {'total_s':>9} {'ms/step':>9} {'share':>7}"]
+        for name, seconds in sorted(self.totals.items(), key=lambda kv: -kv[1]):
+            lines.append(
+                f"{name:>22} {seconds:>9.2f} {seconds / total_time_steps * 1e3:>9.2f} "
+                f"{seconds / total:>6.1%}"
+            )
+        lines.append(f"{'accounted':>22} {total:>9.2f} {total / total_time_steps * 1e3:>9.2f}")
+        return "\n".join(lines)
+
+
 def run_simulation_numba_parallel(
     config: SimulationConfig,
     rng: Optional[np.random.Generator] = None,
     progress: bool = True,
     num_threads: Optional[int] = None,
+    phase_timing: bool = False,
 ) -> Result:
     """Simulate a pulse train and return the full run record.
 
@@ -439,15 +532,25 @@ def run_simulation_numba_parallel(
 
     rng = rng if rng is not None else np.random.default_rng(config.seed)
     schedule = build_track_schedule(config, rng)
+    # Draws the identical stream of doubles the per-track sampler would, in
+    # blocks -- 166x faster, and 24.6 M tracks of a full-electrode run would
+    # otherwise spend 110 s in a Python loop. See pulses.CylinderSampler.
+    sampler = CylinderSampler(rng, config.mid_xy, config.sampling_radius, config.no_xy)
 
     # Two arrays per species: the sweep reads `*_array` and writes `*_next`,
     # so every voxel update is independent of every other. That double buffer
     # is what makes the loop trivially parallel.
+    #
+    # `np.empty` + a threaded zero-fill, not `np.zeros`: the fill is what places
+    # the pages on NUMA domains, and it must be done by the worker threads
+    # rather than by this one. See `_first_touch_parallel`.
     shape = (config.no_xy, config.no_xy, config.no_z_with_buffer)
-    positive_array: FloatArray3D = np.zeros(shape)
-    negative_array: FloatArray3D = np.zeros(shape)
-    positive_next: FloatArray3D = np.zeros(shape)
-    negative_next: FloatArray3D = np.zeros(shape)
+    positive_array: FloatArray3D = np.empty(shape)
+    negative_array: FloatArray3D = np.empty(shape)
+    positive_next: FloatArray3D = np.empty(shape)
+    negative_next: FloatArray3D = np.empty(shape)
+    for array in (positive_array, negative_array, positive_next, negative_next):
+        _first_touch_parallel(array)
 
     (p_lat, p_zm, p_zp, p_cen), (n_lat, n_zm, n_zp, n_cen) = config.scheme_coefficients()
     alpha_dt = RECOMBINATION_ALPHA_CM3_S * config.dt
@@ -463,27 +566,39 @@ def run_simulation_numba_parallel(
     f_t: FloatArray1D = np.ones(config.total_time_steps)
     diagnostics = Diagnostics(config)
     report_every = max(1, config.total_time_steps // 20)
+    # Which of the two swap strategies below applies; resolved once, not per
+    # step, so the hot loop carries no string comparison.
+    reflecting_wall = config.lateral_boundary == "reflecting"
+    timer = _PhaseTimer(phase_timing)
 
     for step in range(config.total_time_steps):
         injected_this_step = 0.0
         n_tracks_this_step = schedule[step]
         if n_tracks_this_step > 0:
-            xs = np.empty(n_tracks_this_step)
-            ys = np.empty(n_tracks_this_step)
-            for t in range(n_tracks_this_step):
-                xs[t], ys[t] = sample_xy_inside_cylinder(rng, config.mid_xy, config.sampling_radius, config.no_xy)
+            timer.start()
+            xs, ys = sampler.sample(n_tracks_this_step)
+            timer.stop("sample_xy")
             # Deposition in three stages: 1D Gaussian factors per track, a
             # row index so the accumulation kernel can parallelise safely, then
             # sum into 2D and broadcast down z once. See the module docstring.
+            timer.start()
             gauss_i, gauss_j, lo_i, hi_i, lo_j, hi_j = _precompute_track_gaussians(
                 xs, ys, config.no_xy, h2, b2, cutoff_voxels
             )
+            timer.stop("track_gaussians")
+            timer.start()
             total_density[:] = 0.0
             offsets, track_ids = _build_row_index(lo_i, hi_i, config.no_xy)
+            timer.stop("row_index")
+            timer.start()
             _accumulate_track_density_numba_parallel(
                 total_density, gauss_i, gauss_j, lo_i, lo_j, hi_j, offsets, track_ids, config.no_xy
             )
+            timer.stop("accumulate")
+            timer.start()
             diagnostics.count_tracks(xs, ys)
+            timer.stop("count_tracks")
+            timer.start()
             injected_this_step = _broadcast_density_numba_parallel(
                 positive_array,
                 negative_array,
@@ -495,8 +610,10 @@ def run_simulation_numba_parallel(
                 config.mid_xy,
                 config.scoring_radius_sq,
             )
+            timer.stop("broadcast")
 
         no_initialised += injected_this_step
+        timer.start()
         recombined, total_p, total_n = _lax_wendroff_step_numba_parallel(
             positive_array,
             negative_array,
@@ -518,18 +635,39 @@ def run_simulation_numba_parallel(
             n_cen,
             alpha_dt,
         )
+        timer.stop("lax_wendroff")
         no_recombined += recombined
         diagnostics.record(step, injected_this_step, recombined, total_p, total_n)
+        timer.start()
 
-        # Copy the interior back rather than swapping references: the sweep
-        # never writes the outer shell, so `*_next` has no valid boundary to
-        # swap in. This is ~30 % of a large step and is the obvious target if
-        # this ever needs to be faster (it would mean carrying the boundary
-        # planes explicitly, which is O(X^2) rather than O(X^2 Z)).
-        positive_array[1:-1, 1:-1, 1:-1] = positive_next[1:-1, 1:-1, 1:-1]
-        negative_array[1:-1, 1:-1, 1:-1] = negative_next[1:-1, 1:-1, 1:-1]
-        apply_lateral_boundary(positive_array, config.lateral_boundary)
-        apply_lateral_boundary(negative_array, config.lateral_boundary)
+        # Swap the buffers instead of copying the interior back. The copy was
+        # 144 ms of a 354 ms full-electrode step, in serial NumPy, and computed
+        # nothing; on 190 threads it alone would have capped the run at 2.5x.
+        #
+        # What the copy was really for is the outer shell: the sweep writes only
+        # the interior, so after a swap the new current buffer's ring is stale.
+        # Both wall conditions can be served without touching the interior:
+        #
+        #   reflecting -- the ring is rewritten from the interior every step
+        #                 anyway, so the stale values are never read.
+        #   otherwise  -- the ring holds accumulated deposition tails that must
+        #                 survive, so carry those four planes across: O(X*Z),
+        #                 not the O(X^2*Z) the full copy cost.
+        #
+        # The z end planes need no care in either case: they start at zero and
+        # nothing ever writes them (deposition starts at k = no_z_electrode),
+        # which is what the sweep's k = 0 and k = -1 reads assume.
+        if reflecting_wall:
+            positive_array, positive_next = positive_next, positive_array
+            negative_array, negative_next = negative_next, negative_array
+            apply_lateral_boundary(positive_array, config.lateral_boundary)
+            apply_lateral_boundary(negative_array, config.lateral_boundary)
+        else:
+            carry_lateral_ring(positive_next, positive_array)
+            carry_lateral_ring(negative_next, negative_array)
+            positive_array, positive_next = positive_next, positive_array
+            negative_array, negative_next = negative_next, negative_array
+        timer.stop("swap_and_boundary")
 
         # Running collection efficiency. Both totals are density sums over the
         # same voxel set, so the voxel volume cancels and never appears.
@@ -537,6 +675,9 @@ def run_simulation_numba_parallel(
 
         if progress and step % report_every == 0:
             print(f"  step {step + 1}/{config.total_time_steps}  f = {f_t[step]:.4f}")
+
+    if phase_timing:
+        print(timer.report(config.total_time_steps))
 
     time_s: FloatArray1D = (np.arange(config.total_time_steps) + 1) * config.dt
     ks = 1.0 / f_t[-1]

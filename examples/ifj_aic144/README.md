@@ -4,8 +4,14 @@ Recombination in a PTW Markus 23343 plane-parallel ionisation chamber on the
 AIC-144 isochronous cyclotron proton beam at IFJ PAN.
 
 ```bash
-python examples/ifj_aic144/run_markus_2mm.py [dev|archive|converged|production]
+python examples/ifj_aic144/run_markus_2mm.py [dev|archive|standard|wide|full_electrode]
+python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 24   # batched backend
 ```
+
+`--threads N` switches to the batched, multi-core backend and is what makes the
+`full_electrode` tier affordable. On a Cyfronet Helios node it must be launched
+as its own `srun` step; see [`docs/HELIOS.md`](../../docs/HELIOS.md) for that
+and for how many cores to ask for.
 
 For what each assumption means and why it is made, see
 [`docs/PHYSICS.md`](../../docs/PHYSICS.md); for timings and scaling,
@@ -45,7 +51,10 @@ uniform and normal to the electrodes.
 | `archive` | 0.008 (80 µm) | 22²×210 | 22 447 | 1.8 s | 1.0929 | 1.1118 |
 | `standard` | 0.014 (140 µm) | 34²×210 | 68 744 | 8.8 s | 1.1011 | 1.1119 |
 | `wide` | 0.018 (180 µm) | 42²×210 | 113 638 | 14.5 s | 1.1035 | 1.1119 |
-| `full_electrode` | 0.265 (2.65 mm) | 536²×210 | 24 630 400 | 12.8 min | 1.1111 | 1.1117 |
+| `full_electrode` | 0.265 (2.65 mm) | 536²×210 | 24 630 400 | 12.8 min¹ | 1.1111 | 1.1117 |
+
+¹ single core. The same run takes ~70 s on 96 Helios cores, with `k_s`
+identical to six digits — see [`docs/HELIOS.md`](../../docs/HELIOS.md).
 
 **No tier is converged in column radius.** A track at the rim of the sampled
 disc has neighbours on one side only, so `k_s` is biased low by a

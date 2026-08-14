@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from pulsed_ion_chamber.config import SimulationConfig
@@ -63,3 +64,41 @@ def test_rf_period_longer_than_dt_warns():
     # is longer than dt, to check the warning path actually fires.
     with pytest.warns(UserWarning, match="RF"):
         SimulationConfig(rf_frequency_hz=1.0, seed=0)
+
+
+# --- track sampling ---------------------------------------------------------
+
+
+def test_block_sampler_draws_exactly_what_the_per_track_sampler_would():
+    """CylinderSampler exists to be 166x faster than sample_xy_inside_cylinder
+    *without* moving a single result, so that published k_s values stay tied to
+    their seeds. Bit equality is the whole contract, not a nicety: any drift in
+    how much of the RNG stream a batch consumes silently reseeds everything
+    that follows it.
+
+    Uneven batch sizes on purpose -- the leftover of one call has to be carried
+    into the next for the stream to line up.
+    """
+    from pulsed_ion_chamber.pulses import CylinderSampler, sample_xy_inside_cylinder
+
+    mid_xy, radius, no_xy = 30, 24.0, 60
+    batches = [7, 1, 5000, 3, 900]
+
+    reference = np.random.default_rng(11)
+    expected = np.array(
+        [sample_xy_inside_cylinder(reference, mid_xy, radius, no_xy) for _ in range(sum(batches))]
+    )
+
+    sampler = CylinderSampler(np.random.default_rng(11), mid_xy, radius, no_xy)
+    got = np.vstack([np.column_stack(sampler.sample(n)) for n in batches])
+
+    np.testing.assert_array_equal(got, expected)
+
+
+def test_block_sampler_stays_inside_the_disc():
+    from pulsed_ion_chamber.pulses import CylinderSampler
+
+    mid_xy, radius, no_xy = 30, 24.0, 60
+    xs, ys = CylinderSampler(np.random.default_rng(2), mid_xy, radius, no_xy).sample(20_000)
+    assert len(xs) == len(ys) == 20_000
+    assert np.all((xs - mid_xy) ** 2 + (ys - mid_xy) ** 2 <= radius**2)

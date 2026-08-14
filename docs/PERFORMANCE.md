@@ -161,19 +161,22 @@ The Lax-Wendroff sweep sustains **12 GB/s** on a single core (Intel Core Ultra 5
 Nothing here is surprising once the arithmetic is done: the run streams the
 carrier arrays several times per step, and that is the whole story.
 
-Two of those rows are avoidable overhead rather than physics:
+Two of those rows were avoidable overhead rather than physics, and **both have
+since been removed** (see [HELIOS.md](HELIOS.md) §6):
 
-- **The copy-back is 28 % of the run and computes nothing.** It exists because
+- **The copy-back was 28 % of the run and computed nothing.** It existed because
   the sweep writes only the interior of the `_next` arrays, so the boundary ring
-  has to be carried over. Double-buffering with a pointer swap would remove it,
-  but it is not a drop-in: under `lateral_boundary="absorbing"` the ring holds
-  accumulated state that the `_next` arrays do not have, so the swap would have
-  to copy the boundary planes explicitly — `O(X² + X·Z)` instead of `O(X²·Z)`.
-- **xy sampling is 8 %**, spent in a Python-level loop calling
-  `sample_xy_inside_cylinder` once per track — 2.4 µs each, 24.6 M times.
-  Vectorising the rejection sampling over a whole batch would recover most of it.
+  had to be carried over. The batched backend now swaps the buffers and handles
+  that ring directly: rewritten from the interior under
+  `lateral_boundary="reflecting"`, or carried across as four planes under
+  `"absorbing"` — `O(X·Z)` instead of `O(X²·Z)`.
+- **xy sampling was 8 %**, a Python-level loop calling
+  `sample_xy_inside_cylinder` once per track, 24.6 M times.
+  `pulses.CylinderSampler` now draws the same numbers in blocks: 166× faster and
+  bit-identical, because it consumes the same RNG stream in the same order.
 
-Together they are ~35 % of this run, with no effect on the physics.
+Together they were ~35 % of this run, with no effect on the physics — the
+post-fix single-core run reproduces `k_s = 1.111065` exactly.
 
 ### Accuracy of the estimate
 
@@ -209,18 +212,29 @@ point the answer would no longer be a scaled copy of the interior.
 
 ## 6. Using many cores
 
-For a single run of a normal-sized scenario, **use one thread.** Measured on a
-dual-EPYC 192-core node, wall time got *worse* with more threads (22.9 s at 1
-thread, 37–44 s at 8–190 with the `omp` threading layer). After track insertion
-is batched per step, each parallel region does very little work — a few hundred
-microseconds — but there are thousands of them, and fork/join and barrier cost
-across NUMA domains dominates. Numba's `workqueue` layer has lower fixed
-overhead and does modestly better, but not reliably enough to matter.
+**It depends entirely on whether the grid fits in cache.** Both hot loops are
+memory-bandwidth-bound, so what threads buy is memory controllers — and a grid
+that lives in L3 has already got all the bandwidth it is going to get.
 
-The exceptions are large grids (§5), where each parallel region finally has
-enough work to amortise its launch cost.
+**Small grids: use one thread.** Measured on a dual-EPYC 192-core node with the
+5 µm "converged" grid (40 MiB of carrier arrays, against 768 MiB of node L3),
+wall time got *worse* with more threads: 22.9 s at 1, 37–44 s at 8–190 with the
+`omp` layer. Each parallel region does a few hundred microseconds of work and
+there are thousands of them, so fork/join and cross-NUMA barrier cost dominates.
 
-**The right way to spend many cores is independent replicas**, not threads:
+**Large grids: threads are the whole point.** The full-electrode grid is 1.9 GiB
+— DRAM-resident, and one core can pull only ~9 GB/s of a ~900 GB/s node. The
+same run is 776 s on one core and 70 s on 96, with `k_s` identical to six
+digits. Getting there needed three fixes that only matter above a few hundred
+MiB — NUMA first touch, deleting the serial copy-back, and taking per-track
+sampling out of the Python interpreter. **[docs/HELIOS.md](HELIOS.md) has the
+measurements, the thread-count recommendation (8–24, not 190), and the list of
+optimisations that turned out to make things worse.**
+
+The crossover is roughly where the carrier arrays exceed the machine's total
+L3. Below it, one thread; above it, one NUMA domain's worth.
+
+**For parameter studies, independent replicas beat threads either way**:
 different seeds, or a sweep over dose rate, energy and voltage, run as separate
 single-threaded processes. Measured: 64 concurrent single-threaded replicas via
 `multiprocessing.Pool(64)` finished in 69 s against ~1600 s for the same 64 runs

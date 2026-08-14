@@ -43,7 +43,7 @@ import numpy.typing as npt
 
 from pulsed_ion_chamber.config import SimulationConfig
 from pulsed_ion_chamber.constants import RECOMBINATION_ALPHA_CM3_S
-from pulsed_ion_chamber.pulses import build_track_schedule, sample_xy_inside_cylinder
+from pulsed_ion_chamber.pulses import CylinderSampler, build_track_schedule
 from pulsed_ion_chamber.state import Diagnostics, Result, apply_lateral_boundary
 
 FloatArray3D = npt.NDArray[np.float64]
@@ -229,6 +229,7 @@ def run_simulation_numba(
     """
     rng = rng if rng is not None else np.random.default_rng(config.seed)
     schedule = build_track_schedule(config, rng)
+    sampler = CylinderSampler(rng, config.mid_xy, config.sampling_radius, config.no_xy)
 
     # Two arrays per species: the sweep reads `*_array` and writes `*_next`,
     # so no voxel update can observe a half-updated neighbour.
@@ -252,8 +253,11 @@ def run_simulation_numba(
 
     for step in range(config.total_time_steps):
         injected_this_step = 0.0
-        for _ in range(schedule[step]):
-            x, y = sample_xy_inside_cylinder(rng, config.mid_xy, config.sampling_radius, config.no_xy)
+        # Sampled a step at a time, deposited one at a time: the sampler draws
+        # the same RNG stream either way (see pulses.CylinderSampler), so this
+        # backend and the batched one stay track-for-track identical.
+        step_xs, step_ys = sampler.sample(schedule[step])
+        for x, y in zip(step_xs, step_ys):
             diagnostics.count_track(x, y)
             injected_this_step += _insert_track_numba(
                 positive_array,
@@ -299,6 +303,12 @@ def run_simulation_numba(
         # Interior only: the sweep never writes the outer shell, so `*_next`
         # has no valid boundary to carry over. apply_lateral_boundary then
         # sets that shell according to the configured wall condition.
+        #
+        # Kept as a copy on purpose. The batched backend replaces this with a
+        # buffer swap plus explicit boundary handling, which is much faster and
+        # much easier to get subtly wrong; leaving the obvious version here is
+        # what lets tests/test_backends_agree.py check the swap against
+        # something that does not share its reasoning.
         positive_array[1:-1, 1:-1, 1:-1] = positive_next[1:-1, 1:-1, 1:-1]
         negative_array[1:-1, 1:-1, 1:-1] = negative_next[1:-1, 1:-1, 1:-1]
         apply_lateral_boundary(positive_array, config.lateral_boundary)

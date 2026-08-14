@@ -58,6 +58,7 @@ print(result.ks)      # recombination correction factor
 | [`docs/PHYSICS.md`](docs/PHYSICS.md) | Every physical and numerical assumption, and why it is made. **Start here** for what is modelled. |
 | [`docs/ALGORITHM.md`](docs/ALGORITHM.md) | Data layout, the two hot loops, what batching means, where the parallelism is. **Start here** for how. |
 | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | Cost model, measured timings, scaling, using many cores. |
+| [`docs/HELIOS.md`](docs/HELIOS.md) | Running on a Cyfronet Helios node: setup, how many cores to ask for, what to expect. |
 | [`pulsed_ion_chamber/README.md`](pulsed_ion_chamber/README.md) | What each module is for. |
 | [`examples/README.md`](examples/README.md) | What each example does. |
 | [`tests/README.md`](tests/README.md) | What each test file pins down. |
@@ -68,8 +69,11 @@ Two results worth knowing before trusting a number:
 - **`k_s` is biased low by the finite simulated column**, falling only as
   `1/radius`, and no affordable radius removes it. Correct for it rather than
   enlarging the grid — `docs/PHYSICS.md` §14.
-- **More threads usually will not help.** Both hot loops are
-  memory-bandwidth-bound. Measure before assuming — `docs/PERFORMANCE.md` §6.
+- **Whether threads help depends on whether the grid fits in cache.** Both hot
+  loops are memory-bandwidth-bound. A small grid is already saturated on one
+  core and gets slower with more; a grid larger than the machine's L3 scales
+  well — the full electrode is 776 s on one Helios core and 70 s on 96, same
+  `k_s` to six digits. `docs/PERFORMANCE.md` §6, `docs/HELIOS.md`.
 
 ## Provenance and scope
 

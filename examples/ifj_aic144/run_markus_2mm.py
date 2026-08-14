@@ -9,10 +9,17 @@ See examples/ifj_aic144/README.md for the scenario table and results,
 docs/PHYSICS.md for what every assumption means and why, and
 docs/PERFORMANCE.md for timings and scaling.
 
-Run:  python examples/ifj_aic144/run_markus_2mm.py [dev|archive|converged|production]
+Run:  python examples/ifj_aic144/run_markus_2mm.py [tier] [--threads N] [--json FILE]
+
+The default is one thread and the unbatched backend, which is what the tier
+table below was measured with. `--threads N` switches to the batched backend
+(`solver_numba_parallel`) and is how the `full_electrode` tier becomes
+affordable: 776 s on one core, 31 s on 190. On a cluster that needs its own
+srun step -- see docs/HELIOS.md.
 """
 
-import sys
+import argparse
+import json
 import time
 
 from pulsed_ion_chamber.config import SimulationConfig
@@ -24,6 +31,7 @@ from pulsed_ion_chamber.constants import (
     ION_MOBILITY_POSITIVE_CM2_VS,
 )
 from pulsed_ion_chamber.solver_numba import run_simulation_numba, warmup
+from pulsed_ion_chamber.solver_numba_parallel import run_simulation_numba_parallel, warmup_parallel
 
 # --- beam and chamber, straight from the archived source_config.yaml ---------
 BEAM_KWARGS = dict(
@@ -107,24 +115,37 @@ def build_config(tier: str = DEFAULT_TIER) -> SimulationConfig:
     )
 
 
-def main(tier: str = DEFAULT_TIER) -> None:
+def main(tier: str = DEFAULT_TIER, threads: int = 1, json_path: str | None = None) -> None:
     config = build_config(tier)
+    # One thread keeps the unbatched backend, so the default run is the one the
+    # tier table was measured with. Anything else needs the batched one: its
+    # kernels are the parallel ones, and it is the only backend where a thread
+    # count means anything.
+    batched = threads != 1
     print(f"=== IFJ AIC-144, Markus 2 mm, macropulse, 10 Gy/s -- '{tier}' grid ===")
     print(config.summary())
+    backend = "solver_numba_parallel" if batched else "solver_numba"
+    print(f"Backend               : {backend}, {threads} thread(s)")
     print()
 
-    warmup()  # one-off JIT compilation, excluded from the timing below
-    t0 = time.perf_counter()
-    result = run_simulation_numba(config, progress=True)
+    if batched:
+        warmup_parallel()
+        t0 = time.perf_counter()
+        result = run_simulation_numba_parallel(config, progress=True, num_threads=threads)
+    else:
+        warmup()  # one-off JIT compilation, excluded from the timing below
+        t0 = time.perf_counter()
+        result = run_simulation_numba(config, progress=True)
     elapsed_s = time.perf_counter() - t0
 
-    print(f"\nWall time (numba, single-threaded): {elapsed_s:.1f} s")
+    radius_um = config.sampled_radius_cm * 1e4
+    corrected = result.ks + EDGE_DEFICIT_UM / radius_um
+    print(f"\nWall time ({backend}, {threads} thread(s)): {elapsed_s:.1f} s")
     print(f"Collection efficiency f = {result.f_t[-1]:.4f}")
     print(f"Recombination correction k_s = 1/f = {result.ks:.4f}")
-    radius_um = config.sampled_radius_cm * 1e4
     print(
         f"Corrected for the finite-column edge deficit (+{EDGE_DEFICIT_UM / radius_um:.4f}): "
-        f"k_s -> {result.ks + EDGE_DEFICIT_UM / radius_um:.4f}"
+        f"k_s -> {corrected:.4f}"
     )
     print(
         "\nPublished IonTracks v2 (FEniCSx) result for this case: k_s = 1.1629 (exact, 1/f)"
@@ -132,6 +153,39 @@ def main(tier: str = DEFAULT_TIER) -> None:
         "\ncomparable until the density convention is reconciled; see README."
     )
 
+    if json_path:
+        # Machine-readable, so a Slurm job array or a scaling sweep can collect
+        # runs without re-parsing the text above.
+        with open(json_path, "w") as handle:
+            json.dump(
+                {
+                    "tier": tier,
+                    "threads": threads,
+                    "backend": backend,
+                    "wall_s": elapsed_s,
+                    "f": float(result.f_t[-1]),
+                    "ks": float(result.ks),
+                    "ks_corrected": float(corrected),
+                    "no_xy": config.no_xy,
+                    "no_z_with_buffer": config.no_z_with_buffer,
+                    "total_time_steps": config.total_time_steps,
+                    "tracks_per_pulse": config.number_of_tracks_per_pulse,
+                },
+                handle,
+                indent=2,
+            )
+        print(f"\nwrote {json_path}")
+
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else DEFAULT_TIER)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("tier", nargs="?", default=DEFAULT_TIER, choices=sorted(GRID_TIERS))
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=1,
+        help="thread count for the batched backend; 1 (default) uses the unbatched one",
+    )
+    parser.add_argument("--json", default=None, help="also write the result as JSON")
+    args = parser.parse_args()
+    main(args.tier, args.threads, args.json)
