@@ -138,26 +138,75 @@ only becomes necessary alongside edge physics the model does not currently
 have — guard-ring field distortion, non-uniform fluence — at which point the
 answer would no longer be a scaled copy of the interior.
 
-## 4. Threads on a laptop: two, and only two
+## 4. Threads on a laptop: two P-cores, then a plateau
 
-Measured, `./bench_laptop.sh --stage scaling`, full electrode, 10 Gy/s, pinned
-one thread per physical core:
+Measured, `./bench_laptop.sh --stage scaling`, full electrode, both dose rates,
+pinned one thread per physical core, checked self-consistent by
+[`profiling/cluster_scaling/collect.py`](../profiling/cluster_scaling/collect.py)
+(`k_s` identical to 12 decimal places at every thread count, at both rates):
 
-| threads | cores | wall | speed-up | eff. | sustained clock |
-|---|---|---|---|---|---|
-| 1 | 1P | 562 s | 1.00× | 100 % | 4793 MHz |
-| 2 | 2P | 373 s | 1.51× | 75 % | 4202 MHz |
+| threads | cores | 10 Gy/s wall | speed-up | eff. | 50 Gy/s wall | speed-up | eff. | clock (10 / 50 Gy/s) |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 1P | 562.1 s | 1.00× | 100 % | 715.3 s | 1.00× | 100 % | 4793 / 4797 MHz |
+| 2 | 2P | 373.2 s | 1.51× | 75 % | 499.2 s | 1.43× | 72 % | 4202 / 4282 MHz |
+| 4 | 2P + 2E | 382.4 s | 1.47× | 37 % | 492.1 s | 1.45× | 36 % | 3663 / 3761 MHz |
+| 8 | 2P + 6E | 391.0 s | 1.44× | 18 % | 489.6 s | 1.46× | 18 % | 3342 / 3412 MHz |
 
-**And part of even that 1.51× is not scaling at all — it is thermal.** The clock
-falls 12 % between the two runs, and at 8 threads (2P + 6E) it is down to
-3412 MHz, 29 % below single-core. On a laptop the second thread is competing for
-bandwidth *and* for a package power budget the first thread was already using.
-That is why every run here records the clock it sustained; a laptop speed-up
-figure without one is not interpretable.
+**At 10 Gy/s, two P-cores isn't just where adding more stops paying off — it's
+the minimum.** Wall time bottoms out at 373 s and then gets *worse*: 382 s at
+4 threads, 391 s at 8. The physics hasn't moved (`k_s = 1.111065` in all four
+rows); the clock has — 4793 → 3342 MHz, 30 % down, as E-cores join in. A laptop
+shares one power/thermal budget across every core, P or E, so past the second
+P-core the extra threads aren't reaching any spare bandwidth — they're
+competing for the bandwidth the first two cores already claimed, and dragging
+the whole package's clock down while they do it.
+
+**At 50 Gy/s the same four thread counts behave differently.** Wall time keeps
+falling past 2 cores, just barely: 499 → 492 → 490 s, a further 2 % from six
+added E-cores. It doesn't reverse. The efficiency column looks the same as the
+10 Gy/s row (37 %, then 18 %), but past 2 threads that number is mostly
+arithmetic — near-flat wall time divided by double the core count — not a sign
+that the E-cores are doing nothing.
+
+**The difference is which stage the extra tracks land in.** 50 Gy/s pushes 5×
+more tracks through the same grid (123.2M vs 24.6M per pulse). The stages that
+scale with track count — rejection sampling and deposition — are embarrassingly
+parallel and take cycles gladly from an E-core; the sweep and broadcast that
+dominate the 10 Gy/s run are bandwidth-bound and already saturated at 2
+P-cores (§3), so there is nothing spare for a third or fourth core to pick up.
+Comparing the rates directly makes the split visible — the PDE sweep does not
+care about dose rate at all, so this ratio isolates the track-bound work:
+
+| threads | 10 Gy/s | 50 Gy/s | ratio |
+|---|---|---|---|
+| 1 | 562.1 s | 715.3 s | 1.27× |
+| 2 | 373.2 s | 499.2 s | 1.34× |
+| 4 | 382.4 s | 492.1 s | 1.29× |
+| 8 | 391.0 s | 489.6 s | 1.25× |
+
+If nothing scaled with thread count this ratio would be flat. Instead it rises
+from 1.27× to a peak of 1.34× at 2 threads, then eases back to 1.25× at 8. The
+peak is the PDE-bound part reaching its floor almost immediately (1 → 2
+threads) while the track-bound part is still running at its 1-thread speed;
+the ratio falls back over 4 and 8 threads as the track-bound part is finally
+given somewhere to go.
+
+**So "two P-cores" is the budget for the bandwidth-bound majority of this
+workload, not an absolute ceiling for every workload on it.** A dose rate high
+enough to keep the E-cores fed on deposition work can still find a little more
+throughput past two threads — a ~2 % effect, next to the 1.43–1.51× the second
+P-core buys, bought here with a 30 % clock drop and six extra cores.
+
+This is exactly what trips the self-consistency checker: every ladder here
+exceeds its >15 % clock-variance threshold. That's the expected signature of a
+laptop measurement, not a broken one — see
+[`profiling/cluster_scaling/collect.py`](../profiling/cluster_scaling/collect.py)
+for why it treats "the clock moved" as the alarm worth raising here.
 
 Contrast with Helios, where 2 threads returns 1.91× at 96 % efficiency and the
-clock does not move. **Whether threads help is a property of the machine**, and
-on this one the answer is "barely".
+clock does not move. **Whether threads help, and how many are worth adding, is
+a property of the machine** — and on this one, past the second P-core, it's
+also a property of how many tracks per pulse you asked for.
 
 ## 5. P-cores versus E-cores
 
