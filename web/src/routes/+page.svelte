@@ -363,7 +363,6 @@
     color: #475569;
     font-size: 0.9rem;
     line-height: 1.5;
-    max-width: 68ch;
   }
 
   .panel {

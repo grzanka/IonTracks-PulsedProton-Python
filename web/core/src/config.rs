@@ -9,6 +9,24 @@ use crate::constants::{
 use crate::stopping_power::{dose_rate_to_fluence_rate_default_air, let_kev_um, track_radius_cm};
 use std::f64::consts::PI;
 
+/// `1234567` -> `"1,234,567"`. Only ever called on non-negative counts.
+fn with_commas(n: i64) -> String {
+    let digits = n.to_string();
+    let bytes = digits.as_bytes();
+    let mut out = String::with_capacity(bytes.len() + bytes.len() / 3);
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(*b as char);
+    }
+    out
+}
+
+fn mib(bytes: f64) -> String {
+    format!("{:.1} MiB", bytes / (1024.0 * 1024.0))
+}
+
 // --- fixed knobs (docs/PERFORMANCE.md's cost-model levers, not physics
 // intuition -- see issue #6 sec. 6 for why these are hidden rather than
 // exposed in v1). grid_size_um used to live here too but is now a `Params`
@@ -155,10 +173,22 @@ impl Config {
             ));
         }
         if no_xy * no_xy * no_z > MAX_TOTAL_VOXELS {
+            // Same formula estimated_memory_bytes uses below (4 carrier arrays,
+            // f64) -- computed here too since we're returning before reaching
+            // that code. The voxel cap exists for two reasons at once: this
+            // byte count, and that the Lax-Wendroff sweep re-reads every one
+            // of these voxels on every one of total_time_steps steps, so a
+            // grid this wide is also a lot of wall-clock, not just RAM.
+            let carrier_bytes = 4.0 * (no_xy * no_xy * no_z_with_buffer) as f64 * 8.0;
             return Err(ConfigError(format!(
                 "Grid too large for this browser prototype: {no_xy}x{no_xy}x{no_z} \
-                 ({} voxels, cap {MAX_TOTAL_VOXELS}). Reduce the radius, or coarsen grid_size_um.",
-                no_xy * no_xy * no_z
+                 ({} voxels, cap {}). The four carrier arrays alone would need about {} \
+                 (this prototype's cap is {}), and every time step has to sweep all of them. \
+                 Reduce the radius, or coarsen grid_size_um.",
+                with_commas(no_xy * no_xy * no_z),
+                with_commas(MAX_TOTAL_VOXELS),
+                mib(carrier_bytes),
+                mib(MAX_MEMORY_BYTES),
             )));
         }
         let mid_xy = no_xy / 2;
@@ -189,8 +219,11 @@ impl Config {
         let total_time_steps = pulse_time_steps + clearance_time_steps;
         if total_time_steps > MAX_TOTAL_TIME_STEPS {
             return Err(ConfigError(format!(
-                "This configuration needs {total_time_steps} time steps (cap {MAX_TOTAL_TIME_STEPS}). \
-                 Try a larger electrode gap or lower voltage."
+                "This configuration needs {} time steps (cap {}) -- the Lax-Wendroff sweep re-reads \
+                 the whole grid on every one of them, so wall time scales directly with this number. \
+                 Try a larger electrode gap or lower voltage (both raise the stable dt).",
+                with_commas(total_time_steps),
+                with_commas(MAX_TOTAL_TIME_STEPS),
             )));
         }
 
@@ -209,9 +242,25 @@ impl Config {
         let number_of_tracks_per_pulse =
             ((fluence_rate_inst_cm2_s * params.pulse_duration_s * area_cm2).round() as i64).max(1);
         if number_of_tracks_per_pulse > MAX_TRACKS_PER_PULSE {
+            // Depositing one track costs a fixed amount of work regardless of
+            // grid size (ALGORITHM.md sec. 4's truncation stencil is what
+            // makes that true), so total deposition time scales linearly with
+            // track count -- there's no "coarsen the grid" escape hatch here
+            // the way there is for the voxel/memory caps above. The other
+            // concrete cost is the arrival-time schedule this many tracks
+            // need before the grid is even touched (2 f64 arrays).
+            let schedule_bytes = 2.0 * number_of_tracks_per_pulse as f64 * 8.0;
+            let schedule_bytes_at_cap = 2.0 * MAX_TRACKS_PER_PULSE as f64 * 8.0;
             return Err(ConfigError(format!(
-                "This configuration injects {number_of_tracks_per_pulse} tracks/pulse \
-                 (cap {MAX_TRACKS_PER_PULSE}). Reduce the dose rate or the radius."
+                "This configuration injects {} tracks/pulse (cap {}). Depositing a track costs \
+                 the same fixed amount of work no matter how big the grid is, so total deposition \
+                 time scales linearly with track count -- above the cap a single run would take \
+                 far longer than a live browser demo should. The arrival-time schedule alone would \
+                 also need about {} (at the cap: {}). Reduce the dose rate or the radius.",
+                with_commas(number_of_tracks_per_pulse),
+                with_commas(MAX_TRACKS_PER_PULSE),
+                mib(schedule_bytes),
+                mib(schedule_bytes_at_cap),
             )));
         }
 
@@ -231,9 +280,9 @@ impl Config {
         let estimated_memory_bytes = track_schedule_bytes.max(carrier_array_bytes + scratch_bytes);
         if estimated_memory_bytes > MAX_MEMORY_BYTES {
             return Err(ConfigError(format!(
-                "Estimated peak memory {:.1} MiB exceeds this prototype's {:.0} MiB cap.",
-                estimated_memory_bytes / (1024.0 * 1024.0),
-                MAX_MEMORY_BYTES / (1024.0 * 1024.0)
+                "Estimated peak memory {} exceeds this prototype's {} cap.",
+                mib(estimated_memory_bytes),
+                mib(MAX_MEMORY_BYTES)
             )));
         }
 
@@ -354,5 +403,24 @@ mod tests {
             err.is_err(),
             "a 1cm column should exceed the browser voxel cap"
         );
+    }
+
+    #[test]
+    fn grid_too_large_error_reports_memory_and_cap() {
+        let params = aic144_like(2.0); // absurdly wide, forces the voxel cap
+        let err = Config::build(params).unwrap_err();
+        assert!(err.0.contains("voxels"), "{}", err.0);
+        assert!(err.0.contains("MiB"), "{}", err.0);
+        assert!(err.0.contains("256.0 MiB"), "{}", err.0); // MAX_MEMORY_BYTES cap
+    }
+
+    #[test]
+    fn too_many_tracks_error_reports_memory_and_reason() {
+        let mut params = aic144_like(0.008); // "archive" radius -- grid stays tiny
+        params.dose_rate_gy_s = 10_000.0; // forces the track-count cap, not the voxel cap
+        let err = Config::build(params).unwrap_err();
+        assert!(err.0.contains("tracks/pulse"), "{}", err.0);
+        assert!(err.0.contains("MiB"), "{}", err.0);
+        assert!(err.0.contains("linearly"), "{}", err.0);
     }
 }
