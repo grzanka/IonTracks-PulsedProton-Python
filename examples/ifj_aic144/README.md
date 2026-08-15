@@ -6,12 +6,20 @@ AIC-144 isochronous cyclotron proton beam at IFJ PAN.
 ```bash
 python examples/ifj_aic144/run_markus_2mm.py [dev|archive|standard|wide|full_electrode]
 python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 24   # batched backend
+python examples/ifj_aic144/run_markus_2mm.py full_electrode --dry-run     # size it first, don't run it
 ```
 
 `--threads N` switches to the batched, multi-core backend and is what makes the
 `full_electrode` tier affordable. On a Cyfronet Helios node it must be launched
 as its own `srun` step; see [`docs/HELIOS.md`](../../docs/HELIOS.md) for that
 and for how many cores to ask for.
+
+`--dry-run` prints the grid's peak memory allocation against what this machine
+actually has free, and a rough runtime estimate, then exits without running
+anything — the way to find out a grid is too big for this machine before
+finding out the hard way. See
+[`docs/BENCHMARKS-LAPTOP.md`](../../docs/BENCHMARKS-LAPTOP.md) sec. 3 for how
+that memory estimate compares to measured peak RSS.
 
 For what each assumption means and why it is made, see
 [`docs/PHYSICS.md`](../../docs/PHYSICS.md); for timings and scaling,

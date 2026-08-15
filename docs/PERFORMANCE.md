@@ -235,4 +235,24 @@ track insertions and PDE steps on the config's actual grid and extrapolates,
 without running the simulation. Use it to size a job before submitting it. It
 reports the per-track and per-step costs separately, which also tells you which
 of the two phases in §1 a given scenario is bound by — and therefore which knob
-is worth turning.
+is worth turning. Its per-track sample uses the unbatched kernel, so on a
+large, batched (`--threads > 1`) run treat the resulting number as an upper
+bound, not a wall-time prediction — see the caution `--dry-run` prints below.
+
+Memory gets the same treatment, and for the same reason: a full-electrode-sized
+grid is gigabytes, and finding that out from the OOM killer twenty minutes into
+a run is worse than finding out before it starts. `SimulationConfig` computes
+`estimated_memory_bytes` for every config (four carrier arrays, the
+arrival-time draw, and the batched backend's 2D scratch — whichever phase's
+allocation peaks) and refuses the config in its constructor if it exceeds
+`memory_budget_fraction` (default 0.8) of currently available RAM.
+`pulsed_ion_chamber.resources.memory_report(config.estimated_memory_bytes,
+config.memory_budget_fraction)` turns that into a human-readable comparison
+against this machine's total and available RAM.
+
+`examples/ifj_aic144/run_markus_2mm.py --dry-run` wires both of the above
+together: it builds the config (so the memory guard has already run), prints
+the memory report and the runtime estimate, and exits without simulating
+anything.
+[docs/BENCHMARKS-LAPTOP.md](BENCHMARKS-LAPTOP.md) sec. 3 has the measured peak
+RSS this estimate has been checked against on the full-electrode grid.

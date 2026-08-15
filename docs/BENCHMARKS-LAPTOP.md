@@ -127,6 +127,40 @@ interpreter, Numba's runtime or NumPy's transient temporaries. The default
 Without the deposition stencil the insertion term alone would be ~4 h on the
 batched backend and ~16 days on the unbatched one.
 
+### RAM on two P-cores, both dose rates
+
+§4 finds two P-cores is the optimal thread count for this grid, so that is
+also the setting to know the memory footprint of. Measured with the
+peak-RSS instrumentation `examples/ifj_aic144/run_markus_2mm.py` now carries
+(`resource.getrusage().ru_maxrss`), same command as §4's ladder,
+`--threads 2`:
+
+| dose rate | wall time | tracks/pulse | peak RSS | `config.estimated_memory_bytes` | margin |
+|---|---|---|---|---|---|
+| 10 Gy/s | 381.9 s | 24 630 400 | **2.03 GiB** | 1.80 GiB (carrier arrays dominate) | +12.8 % |
+| 50 Gy/s | 496.0 s | 123 152 000 | **2.16 GiB** | 1.84 GiB (arrival-time draw dominates) | +17.7 % |
+
+`k_s` matches §4's single-run figures to 6 decimal places (1.111065 and
+1.446434), and both wall times reproduce the ladder in §4 within ~2 %
+(381.9 s vs. 373.2 s; 496.0 s vs. 499.2 s) — laptop-to-laptop-run noise from
+thermal state, not a different measurement (§4 already flags this ladder as
+thermally throttled; this re-run started a few degrees warmer).
+
+**The cross-check.** `estimated_memory_bytes` is `max(track_schedule_bytes,
+carrier_array_bytes + scratch_bytes)` (config.py `_estimate_and_check_memory`)
+— it takes whichever of the two phases peaks, not their sum, since the
+arrival-time draw is freed before the solver arrays are touched. Which term
+wins depends on the dose rate: at 10 Gy/s the four carrier arrays (1.80 GiB,
+fixed by the grid) dominate; at 50 Gy/s the arrival-time draw for 123 M tracks
+(2 float64 arrays, 1.84 GiB) edges narrowly ahead of them. Both peak-RSS
+figures land above the estimate by roughly the same margin the single-thread
+run in this section found (12 %), a little more at 50 Gy/s — plausibly the
+larger transient allocation (1.84 GiB vs. 375 MiB at 10 Gy/s) leaves more
+allocator overhead behind it, though this hasn't been isolated further.
+Either way `memory_budget_fraction`'s default 0.8 headroom absorbs it with
+enormous room to spare on this 30.8 GiB laptop — the interesting case is a
+smaller machine, which is exactly what §7's `--dry-run` flag is for.
+
 ### Is it worth running?
 
 As a way to get an accurate `k_s`, no. The full electrode is still 0.1 % below
@@ -254,3 +288,51 @@ Plug in, use a performance profile, close everything else. See
 For parameter studies, run independent single-threaded processes — but expect
 well under linear aggregate throughput, for the same bandwidth and power reasons
 as above.
+
+## 7. Sizing a run before starting it: `--dry-run`
+
+The `full_electrode` grid is 2 GiB on this laptop (§3); on a machine with less
+RAM to spare, or a grid pushed wider than this one, finding that out from the
+OOM killer partway through a 6–12 minute run is worse than finding out before
+it starts. `run_markus_2mm.py --dry-run` builds the config (so the
+constructor's own memory guard has already run — see
+[`resources.py`](../pulsed_ion_chamber/resources.py)) and prints the sizing
+without running the simulation:
+
+```
+$ python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 2 --dry-run
+...
+--- dry run: memory ---
+Estimated peak allocation : 1.80 GiB
+Total RAM on this machine : 30.84 GiB
+Currently available RAM   : 19.75 GiB
+Budget (80% of available)    : 15.80 GiB
+Fits within budget        : yes
+
+--- dry run: rough runtime estimate (unbatched, single-track kernels; JIT excluded) ---
+...
+estimated wall time       : 74441 s (21 h)
+
+CAUTION: that estimate times the unbatched per-track kernel (_insert_track_numba),
+not the batched backend --threads=2 would actually use here. ...
+
+No simulation was run (--dry-run).
+```
+
+The memory half is the number to trust directly — it is exactly
+`config.estimated_memory_bytes`, the figure §3 checked against measured peak
+RSS (12–18 % low, comfortably inside the default 80 % budget). The runtime
+half is a genuine caveat, not a formatting nit: `estimate_full_runtime`
+(PERFORMANCE.md §7) times the unbatched, one-track-at-a-time kernel
+regardless of `--threads`, and on a grid this size that kernel is
+**~500–1000× slower** than the batched backend a real `--threads 2` run uses
+— compare the 21 h it prints above against the 382 s (§3/§4) the run actually
+takes. `--dry-run` prints an explicit `CAUTION` whenever `--threads > 1` would
+select the batched backend, so the number cannot be mistaken for a wall-time
+prediction; treat it only as a diagnostic of whether a scenario is
+deposition-bound or PDE-bound (PERFORMANCE.md §1).
+
+`pulsed_ion_chamber.resources.memory_report()` is the reusable half of this —
+it takes any `(required_bytes, budget_fraction)` pair and returns the same
+required-vs-available comparison `--dry-run` prints, so the same check can be
+dropped into another script without re-deriving it.
