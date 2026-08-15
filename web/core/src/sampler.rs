@@ -11,7 +11,7 @@
 //! only statistically comparable, same as comparing two different seeds of
 //! the same generator. See issue #6 sec. 7.
 
-use rand::Rng;
+use rand::RngExt;
 use rand::SeedableRng;
 use rand_pcg::Pcg64;
 
@@ -31,7 +31,7 @@ pub fn build_schedule(
     let mut cumulative = Vec::with_capacity(n);
     let mut running = 0.0;
     for _ in 0..n {
-        running += rng.gen::<f64>();
+        running += rng.random::<f64>();
         cumulative.push(running);
     }
     let mut schedule = vec![0i64; pulse_time_steps.max(0) as usize];
@@ -55,8 +55,8 @@ pub fn sample_xy_inside_cylinder(
     no_xy: i64,
 ) -> (f64, f64) {
     loop {
-        let x = rng.gen::<f64>() * no_xy as f64;
-        let y = rng.gen::<f64>() * no_xy as f64;
+        let x = rng.random::<f64>() * no_xy as f64;
+        let y = rng.random::<f64>() * no_xy as f64;
         let dx = x - mid_xy as f64;
         let dy = y - mid_xy as f64;
         if dx * dx + dy * dy <= inner_radius_sq {
