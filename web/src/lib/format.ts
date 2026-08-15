@@ -31,3 +31,11 @@ export function formatBytes(bytes: number): string {
 export function formatCount(n: number): string {
   return Math.round(n).toLocaleString("en-US");
 }
+
+export function formatSeconds(seconds: number): string {
+  if (seconds < 1) return "< 1 s";
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = Math.round(seconds - minutes * 60);
+  return `${minutes} min ${remainder}s`;
+}

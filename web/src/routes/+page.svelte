@@ -5,7 +5,7 @@
   import { estimate, loadWasm, type Estimate, type SimParams } from "$lib/wasm-core/loader";
   import { SimulationController } from "$lib/sim/controller";
   import type { ProgressChunk } from "$lib/sim/protocol";
-  import { formatBytes, formatCount, siScale } from "$lib/format";
+  import { formatBytes, formatCount, formatSeconds, siScale } from "$lib/format";
   import {
     DOSE_RATE_UNITS,
     ENERGY_UNITS,
@@ -74,12 +74,65 @@
 
   let radiusPercentOfMarkus = $derived((sampledRadiusCm / MARKUS_FULL_RADIUS_CM) * 100);
 
+  type TimeEstimateState = "idle" | "measuring" | "done" | "error";
+  let timeEstimateState = $state<TimeEstimateState>("idle");
+  let timeEstimateSeconds = $state<number | undefined>(undefined);
+  let timeEstimateError = $state("");
+  // Bumped on every param change (invalidates a stale in-flight measurement)
+  // and on every new measurement (so a late reply to an earlier one is
+  // ignored rather than overwriting a newer result).
+  let timeEstimateGeneration = 0;
+
+  $effect(() => {
+    // Any config change makes a previous measurement meaningless.
+    void eMevU;
+    void voltageV;
+    void electrodeGapCm;
+    void doseRateGyS;
+    void pulseDurationS;
+    void sampledRadiusCm;
+    void gridSizeUm;
+    timeEstimateGeneration++;
+    timeEstimateState = "idle";
+    timeEstimateSeconds = undefined;
+  });
+
   onMount(() => {
     loadWasm().then(() => {
       wasmReady = true;
     });
     return () => controller.dispose();
   });
+
+  function runTimeEstimate(): void {
+    if (!sizing?.ok) return;
+    const generation = ++timeEstimateGeneration;
+    timeEstimateState = "measuring";
+    timeEstimateSeconds = undefined;
+    timeEstimateError = "";
+    const seed = Math.floor(Math.random() * 1_000_000_000);
+    controller.estimateRunningTime(currentParams(), seed, 3000, {
+      onInvalid: (error) => {
+        if (generation !== timeEstimateGeneration) return;
+        timeEstimateState = "error";
+        timeEstimateError = error;
+      },
+      onResult: (seconds) => {
+        if (generation !== timeEstimateGeneration) return;
+        timeEstimateState = "done";
+        timeEstimateSeconds = seconds;
+      },
+      onCancelled: () => {
+        if (generation !== timeEstimateGeneration) return;
+        timeEstimateState = "idle";
+      },
+      onError: (message) => {
+        if (generation !== timeEstimateGeneration) return;
+        timeEstimateState = "error";
+        timeEstimateError = message;
+      },
+    });
+  }
 
   function startRun(): void {
     if (!sizing?.ok) return;
@@ -226,32 +279,63 @@
         <p>Loading WebAssembly module...</p>
       {:else if sizing}
         {#if sizing.ok}
-          <dl class="estimate">
-            <div>
-              <dt>Grid</dt>
-              <dd>{sizing.noXy}&times;{sizing.noXy}&times;{sizing.noZ} voxels</dd>
+          <div class="estimate-columns">
+            <div class="estimate-group">
+              <h3>Memory (RAM)</h3>
+              <dl class="estimate">
+                <div>
+                  <dt>Grid</dt>
+                  <dd>{sizing.noXy}&times;{sizing.noXy}&times;{sizing.noZ} voxels</dd>
+                </div>
+                <div>
+                  <dt>Estimated memory</dt>
+                  <dd>{formatBytes(sizing.estimatedMemoryBytes)}</dd>
+                </div>
+                <div>
+                  <dt>% of full Markus radius</dt>
+                  <dd>{radiusPercentOfMarkus.toFixed(1)}%</dd>
+                </div>
+              </dl>
             </div>
-            <div>
-              <dt>Tracks per pulse</dt>
-              <dd>{formatCount(sizing.numberOfTracksPerPulse)}</dd>
+            <div class="estimate-group">
+              <h3>CPU (time)</h3>
+              <dl class="estimate">
+                <div>
+                  <dt>Tracks per pulse</dt>
+                  <dd>{formatCount(sizing.numberOfTracksPerPulse)}</dd>
+                </div>
+                <div>
+                  <dt>Time steps</dt>
+                  <dd>{formatCount(sizing.totalTimeSteps)}</dd>
+                </div>
+                <div>
+                  <dt>Time step (dt)</dt>
+                  <dd>{sizing.dtNs.toFixed(1)} ns</dd>
+                </div>
+                <div>
+                  <dt>Rough guess</dt>
+                  <dd>{formatSeconds(sizing.estimatedWallSecondsRough)}</dd>
+                </div>
+              </dl>
+              <p class="cpu-hint">
+                Rough guess assumes a fast desktop; actual time varies a lot by device.
+              </p>
+              <button
+                type="button"
+                onclick={runTimeEstimate}
+                disabled={timeEstimateState === "measuring"}
+              >
+                {timeEstimateState === "measuring" ? "Measuring... (~3s)" : "Estimate running time"}
+              </button>
+              {#if timeEstimateState === "done" && timeEstimateSeconds !== undefined}
+                <p class="cpu-measured">
+                  Measured on this device: ~{formatSeconds(timeEstimateSeconds)}
+                </p>
+              {:else if timeEstimateState === "error"}
+                <p class="error-note">{timeEstimateError}</p>
+              {/if}
             </div>
-            <div>
-              <dt>Time steps</dt>
-              <dd>{formatCount(sizing.totalTimeSteps)}</dd>
-            </div>
-            <div>
-              <dt>Estimated memory</dt>
-              <dd>{formatBytes(sizing.estimatedMemoryBytes)}</dd>
-            </div>
-            <div>
-              <dt>Time step (dt)</dt>
-              <dd>{sizing.dtNs.toFixed(1)} ns</dd>
-            </div>
-            <div>
-              <dt>% of full Markus radius</dt>
-              <dd>{radiusPercentOfMarkus.toFixed(1)}%</dd>
-            </div>
-          </dl>
+          </div>
           <p class="ok-note">Within this prototype's browser safety limits.</p>
           <button type="button" class="primary" onclick={startRun}>Run simulation</button>
         {:else}
@@ -380,11 +464,38 @@
     margin-bottom: 1rem;
   }
 
+  .estimate-columns {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1.5rem;
+    margin: 0.75rem 0;
+  }
+
+  .estimate-group h3 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #64748b;
+    margin: 0 0 0.5rem;
+  }
+
+  .cpu-hint {
+    font-size: 0.78rem;
+    color: #64748b;
+    margin: 0.4rem 0 0.6rem;
+  }
+
+  .cpu-measured {
+    font-size: 0.85rem;
+    color: #15803d;
+    margin-top: 0.5rem;
+  }
+
   .estimate {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 0.5rem 1rem;
-    margin: 0.75rem 0;
+    margin: 0;
   }
 
   .estimate div {

@@ -27,6 +27,17 @@ fn mib(bytes: f64) -> String {
     format!("{:.1} MiB", bytes / (1024.0 * 1024.0))
 }
 
+/// Measured (desktop Chromium, this wasm build, release + wasm-opt) cost of
+/// one voxel touched once: both the Lax-Wendroff sweep and this crate's
+/// batched-deposition broadcast (solver.rs) are `O(voxels)` per step, and
+/// held to ~this rate consistently across a 25x grid-size range (2.3M to
+/// 59M voxels). Used only for the *rough*, instant, always-on estimate --
+/// `estimate_running_time` (lib.rs) measures the real number for whichever
+/// device is actually running this, which is what the hard cap
+/// (MAX_TOTAL_VOXEL_STEPS) leaves room for by budgeting a much slower
+/// device than this constant assumes.
+const ROUGH_NS_PER_VOXEL_STEP: f64 = 8.2;
+
 // --- fixed knobs (docs/PERFORMANCE.md's cost-model levers, not physics
 // intuition -- see issue #6 sec. 6 for why these are hidden rather than
 // exposed in v1). grid_size_um used to live here too but is now a `Params`
@@ -40,10 +51,39 @@ pub const REPETITION_RATE_HZ: f64 = 50.0;
 pub const N_CLEARANCE_SEPARATION_TIMES: f64 = 2.0;
 
 // --- hard browser-safety ceilings, independent of the UI's own slider
-// ranges (defense in depth -- see issue #6 sec. 5) ---
-pub const MAX_TOTAL_VOXELS: i64 = 2_000_000; // ~5x the "wide" tier
-pub const MAX_MEMORY_BYTES: f64 = 256.0 * 1024.0 * 1024.0;
-pub const MAX_TRACKS_PER_PULSE: i64 = 2_000_000;
+// ranges (defense in depth -- see issue #6 sec. 5). Two genuinely different
+// resources, two genuinely different kinds of cap:
+//
+// RAM is a real byte count (MAX_MEMORY_BYTES) -- exhausting it can crash the
+// tab, so it stays a hard, accurately-computed limit.
+//
+// CPU is wall time, and there is no way to know a visitor's device speed in
+// advance, so MAX_TOTAL_VOXEL_STEPS is deliberately not a raw grid-size
+// limit (an earlier version of this cap was exactly that -- reachable at a
+// modest 106x106x200 grid using only 71 MiB, which is the bug this comment
+// replaces the reasoning for). It caps `total_time_steps * voxels` instead:
+// both the Lax-Wendroff sweep and this crate's batched-deposition broadcast
+// (see solver.rs's module docs) cost `O(voxels)` *per step*, measured at a
+// consistent ~8.2 ns/voxel-step across a 25x grid-size range (2.3M to 59M
+// voxels) in this wasm build, in desktop Chromium. The cap below assumes a
+// device up to ~12x slower than that (~100 ns/voxel-step) and budgets about
+// 10 minutes of wall time even there -- generous on purpose, since the
+// `estimate_running_time` escape hatch (see lib.rs) gives a visitor the real
+// number for their own device before they commit to a long run.
+pub const MAX_TOTAL_VOXEL_STEPS: f64 = 6_000_000_000.0;
+// Independent of the above: an absolute ceiling on raw grid dimensions,
+// purely to stay inside i64 multiplication range and refuse an allocation
+// attempt before it happens. Not meant to be the resource-meaningful cap --
+// for any realistic config, MAX_MEMORY_BYTES or MAX_TOTAL_VOXEL_STEPS is hit
+// far below this.
+pub const ABSOLUTE_MAX_GRID_DIM: i64 = 20_000;
+pub const MAX_MEMORY_BYTES: f64 = 1024.0 * 1024.0 * 1024.0; // 1 GiB
+
+// Batched deposition (solver.rs) made per-track cost independent of no_z, so
+// this is no longer a CPU gate -- it's a backstop against the arrival-time
+// schedule's own memory (2 f64s/track) and against unbounded schedule-build
+// time, both of which scale with track count regardless of grid size.
+pub const MAX_TRACKS_PER_PULSE: i64 = 50_000_000;
 pub const MAX_TOTAL_TIME_STEPS: i64 = 200_000;
 
 /// The knobs this prototype exposes to the user. Everything else
@@ -119,6 +159,9 @@ pub struct Config {
     pub carrier_array_bytes: f64,
     pub track_schedule_bytes: f64,
     pub estimated_memory_bytes: f64,
+    /// `total_time_steps * voxels` -- the CPU-time proxy MAX_TOTAL_VOXEL_STEPS
+    /// caps. See [`Config::rough_wall_seconds_estimate`].
+    pub voxel_steps: f64,
 }
 
 /// Largest `dt` (starting from 1 s and shrinking) satisfying the von Neumann
@@ -172,24 +215,15 @@ impl Config {
                     .into(),
             ));
         }
-        if no_xy * no_xy * no_z > MAX_TOTAL_VOXELS {
-            // Same formula estimated_memory_bytes uses below (4 carrier arrays,
-            // f64) -- computed here too since we're returning before reaching
-            // that code. The voxel cap exists for two reasons at once: this
-            // byte count, and that the Lax-Wendroff sweep re-reads every one
-            // of these voxels on every one of total_time_steps steps, so a
-            // grid this wide is also a lot of wall-clock, not just RAM.
-            let carrier_bytes = 4.0 * (no_xy * no_xy * no_z_with_buffer) as f64 * 8.0;
-            return Err(ConfigError(format!(
-                "Grid too large for this browser prototype: {no_xy}x{no_xy}x{no_z} \
-                 ({} voxels, cap {}). The four carrier arrays alone would need about {} \
-                 (this prototype's cap is {}), and every time step has to sweep all of them. \
-                 Reduce the radius, or coarsen grid_size_um.",
-                with_commas(no_xy * no_xy * no_z),
-                with_commas(MAX_TOTAL_VOXELS),
-                mib(carrier_bytes),
-                mib(MAX_MEMORY_BYTES),
-            )));
+        if no_xy > ABSOLUTE_MAX_GRID_DIM || no_z_with_buffer > ABSOLUTE_MAX_GRID_DIM {
+            // Refuses before any multiplication that could overflow i64 or
+            // any allocation attempt -- MAX_MEMORY_BYTES/MAX_TOTAL_VOXEL_STEPS
+            // reject everything realistic long before this triggers.
+            return Err(ConfigError(
+                "Grid dimensions absurdly large for this browser prototype -- reduce the \
+                 radius or the electrode gap, or coarsen grid_size_um."
+                    .into(),
+            ));
         }
         let mid_xy = no_xy / 2;
         let outer_radius = no_xy as f64 / 2.0;
@@ -226,6 +260,31 @@ impl Config {
                 with_commas(MAX_TOTAL_TIME_STEPS),
             )));
         }
+        let voxels = (no_xy * no_xy * no_z_with_buffer) as f64;
+        let voxel_steps = total_time_steps as f64 * voxels;
+        if voxel_steps > MAX_TOTAL_VOXEL_STEPS {
+            // The real CPU-time gate -- see the MAX_TOTAL_VOXEL_STEPS doc
+            // comment for the ~8.2 ns/voxel-step measurement and the safety
+            // margin behind this cap. Reports an estimated wall time at that
+            // measured rate (this build, a fast desktop) so the message
+            // means something concrete rather than a bare ratio of two big
+            // numbers.
+            let estimated_seconds_here = voxel_steps * ROUGH_NS_PER_VOXEL_STEP * 1e-9;
+            let cap_seconds_here = MAX_TOTAL_VOXEL_STEPS * ROUGH_NS_PER_VOXEL_STEP * 1e-9;
+            return Err(ConfigError(format!(
+                "This configuration needs about {:.0}s on the machine this was benchmarked on \
+                 (cap {:.0}s there; could be much longer on a slower device) -- {no_xy}x{no_xy}x{no_z} \
+                 voxels swept {} times. Both the Lax-Wendroff sweep and this crate's batched track \
+                 deposition cost one full grid pass per time step, so wall time scales with grid size \
+                 times step count together, not either alone. Reduce the radius, coarsen grid_size_um, \
+                 or use a larger electrode gap/lower voltage to cut the step count -- or use \
+                 \"Estimate running time\" to measure the real number for your own device before \
+                 deciding.",
+                estimated_seconds_here,
+                cap_seconds_here,
+                with_commas(total_time_steps),
+            )));
+        }
 
         let let_ev_cm = let_kev_um_ * 1e7;
         let n0 = let_ev_cm / W_EV_PER_ION_PAIR;
@@ -242,21 +301,20 @@ impl Config {
         let number_of_tracks_per_pulse =
             ((fluence_rate_inst_cm2_s * params.pulse_duration_s * area_cm2).round() as i64).max(1);
         if number_of_tracks_per_pulse > MAX_TRACKS_PER_PULSE {
-            // Depositing one track costs a fixed amount of work regardless of
-            // grid size (ALGORITHM.md sec. 4's truncation stencil is what
-            // makes that true), so total deposition time scales linearly with
-            // track count -- there's no "coarsen the grid" escape hatch here
-            // the way there is for the voxel/memory caps above. The other
-            // concrete cost is the arrival-time schedule this many tracks
-            // need before the grid is even touched (2 f64 arrays).
+            // This crate batches deposition (solver.rs: sum a step's tracks
+            // into a 2D scratch, broadcast down z once), which makes a
+            // single track's own cost small and grid-independent -- the
+            // voxel_steps cap above already accounts for the (grid-size-
+            // dependent) broadcast pass. What track count alone still costs,
+            // unboundedly, is the arrival-time schedule built before the
+            // grid is even touched: two f64 arrays, so this cap is really a
+            // memory/schedule-build backstop, not a per-step CPU gate.
             let schedule_bytes = 2.0 * number_of_tracks_per_pulse as f64 * 8.0;
             let schedule_bytes_at_cap = 2.0 * MAX_TRACKS_PER_PULSE as f64 * 8.0;
             return Err(ConfigError(format!(
-                "This configuration injects {} tracks/pulse (cap {}). Depositing a track costs \
-                 the same fixed amount of work no matter how big the grid is, so total deposition \
-                 time scales linearly with track count -- above the cap a single run would take \
-                 far longer than a live browser demo should. The arrival-time schedule alone would \
-                 also need about {} (at the cap: {}). Reduce the dose rate or the radius.",
+                "This configuration injects {} tracks/pulse (cap {}). The arrival-time schedule \
+                 alone would need about {} (at the cap: {}) before the grid is even touched. \
+                 Reduce the dose rate or the radius.",
                 with_commas(number_of_tracks_per_pulse),
                 with_commas(MAX_TRACKS_PER_PULSE),
                 mib(schedule_bytes),
@@ -273,7 +331,6 @@ impl Config {
             centre: 1.0 - c * c - 6.0 * s,
         };
 
-        let voxels = (no_xy * no_xy * no_z_with_buffer) as f64;
         let carrier_array_bytes = 4.0 * voxels * 8.0;
         let track_schedule_bytes = 2.0 * number_of_tracks_per_pulse as f64 * 8.0;
         let scratch_bytes = (no_xy * no_xy) as f64 * 8.0;
@@ -310,7 +367,17 @@ impl Config {
             carrier_array_bytes,
             track_schedule_bytes,
             estimated_memory_bytes,
+            voxel_steps,
         })
+    }
+
+    /// Rough, instant, allocation-free wall-time guess -- `voxel_steps` at
+    /// [`ROUGH_NS_PER_VOXEL_STEP`], a desktop-class measurement. Meant to be
+    /// shown alongside a clear "measure it for real" escape hatch
+    /// (`estimate_running_time` in lib.rs), not trusted on its own -- device
+    /// speed varies far more than this single constant can capture.
+    pub fn rough_wall_seconds_estimate(&self) -> f64 {
+        self.voxel_steps * ROUGH_NS_PER_VOXEL_STEP * 1e-9
     }
 
     /// `RECOMBINATION_ALPHA_CM3_S * dt`, the sink coefficient the solver
@@ -406,21 +473,35 @@ mod tests {
     }
 
     #[test]
-    fn grid_too_large_error_reports_memory_and_cap() {
-        let params = aic144_like(2.0); // absurdly wide, forces the voxel cap
+    fn grid_too_large_error_reports_estimated_time_and_cap() {
+        let params = aic144_like(2.0); // absurdly wide, forces the voxel-steps cap
         let err = Config::build(params).unwrap_err();
         assert!(err.0.contains("voxels"), "{}", err.0);
-        assert!(err.0.contains("MiB"), "{}", err.0);
-        assert!(err.0.contains("256.0 MiB"), "{}", err.0); // MAX_MEMORY_BYTES cap
+        assert!(err.0.contains("s on the machine"), "{}", err.0);
+        assert!(err.0.contains("cap"), "{}", err.0);
+    }
+
+    #[test]
+    fn modest_wide_grid_is_not_rejected_on_voxel_count_alone() {
+        // Regression test for the bug this cap redesign fixes: a
+        // 106x106x200 grid (71 MiB, well under the 1 GiB memory cap) used to
+        // be refused purely for its raw voxel count (the old, since-removed
+        // MAX_TOTAL_VOXELS). It should be accepted now -- the real CPU cost
+        // (~3.65e9 voxel-steps, comfortably under MAX_TOTAL_VOXEL_STEPS) is
+        // what actually gates it, not grid size by itself.
+        let params = aic144_like(0.05);
+        let config = Config::build(params).unwrap();
+        assert_eq!(config.no_xy, 106);
+        assert!(config.estimated_memory_bytes < 100.0 * 1024.0 * 1024.0);
     }
 
     #[test]
     fn too_many_tracks_error_reports_memory_and_reason() {
         let mut params = aic144_like(0.008); // "archive" radius -- grid stays tiny
-        params.dose_rate_gy_s = 10_000.0; // forces the track-count cap, not the voxel cap
+        params.dose_rate_gy_s = 25_000.0; // forces the track-count cap, not the voxel-steps cap
         let err = Config::build(params).unwrap_err();
         assert!(err.0.contains("tracks/pulse"), "{}", err.0);
         assert!(err.0.contains("MiB"), "{}", err.0);
-        assert!(err.0.contains("linearly"), "{}", err.0);
+        assert!(err.0.contains("schedule"), "{}", err.0);
     }
 }

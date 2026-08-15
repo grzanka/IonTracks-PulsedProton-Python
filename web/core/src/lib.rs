@@ -82,6 +82,14 @@ pub struct Estimate {
     pub total_time_steps: i32,
     pub number_of_tracks_per_pulse: f64,
     pub estimated_memory_bytes: f64,
+    /// Rough, desktop-class guess -- see
+    /// [`config::Config::rough_wall_seconds_estimate`]. There's no Rust-side
+    /// "measure it for real" counterpart: the Worker does that directly,
+    /// driving [`WasmSimulation::step`] for a few wall-clock seconds and
+    /// extrapolating from the real, on-device rate -- the same
+    /// `estimate()`-then-`WasmSimulation` split this whole module doc
+    /// describes, just with a short timed sample instead of a full run.
+    pub estimated_wall_seconds_rough: f64,
     pub dt_ns: f64,
     pub let_kev_um: f64,
     pub track_radius_um: f64,
@@ -140,6 +148,7 @@ pub fn estimate(
             total_time_steps: c.total_time_steps as i32,
             number_of_tracks_per_pulse: c.number_of_tracks_per_pulse as f64,
             estimated_memory_bytes: c.estimated_memory_bytes,
+            estimated_wall_seconds_rough: c.rough_wall_seconds_estimate(),
             dt_ns: c.dt * 1e9,
             let_kev_um: c.let_kev_um,
             track_radius_um: c.track_radius_cm * 1e4,
@@ -152,6 +161,7 @@ pub fn estimate(
             total_time_steps: 0,
             number_of_tracks_per_pulse: 0.0,
             estimated_memory_bytes: 0.0,
+            estimated_wall_seconds_rough: 0.0,
             dt_ns: 0.0,
             let_kev_um: 0.0,
             track_radius_um: 0.0,
