@@ -127,6 +127,40 @@ interpreter, Numba's runtime or NumPy's transient temporaries. The default
 Without the deposition stencil the insertion term alone would be ~4 h on the
 batched backend and ~16 days on the unbatched one.
 
+### RAM on two P-cores, both dose rates
+
+§4 finds two P-cores is the optimal thread count for this grid, so that is
+also the setting to know the memory footprint of. Measured with the
+peak-RSS instrumentation `examples/ifj_aic144/run_markus_2mm.py` now carries
+(`resource.getrusage().ru_maxrss`), same command as §4's ladder,
+`--threads 2`:
+
+| dose rate | wall time | tracks/pulse | peak RSS | `config.estimated_memory_bytes` | margin |
+|---|---|---|---|---|---|
+| 10 Gy/s | 381.9 s | 24 630 400 | **2.03 GiB** | 1.80 GiB (carrier arrays dominate) | +12.8 % |
+| 50 Gy/s | 496.0 s | 123 152 000 | **2.16 GiB** | 1.84 GiB (arrival-time draw dominates) | +17.7 % |
+
+`k_s` matches §4's single-run figures to 6 decimal places (1.111065 and
+1.446434), and both wall times reproduce the ladder in §4 within ~2 %
+(381.9 s vs. 373.2 s; 496.0 s vs. 499.2 s) — laptop-to-laptop-run noise from
+thermal state, not a different measurement (§4 already flags this ladder as
+thermally throttled; this re-run started a few degrees warmer).
+
+**The cross-check.** `estimated_memory_bytes` is `max(track_schedule_bytes,
+carrier_array_bytes + scratch_bytes)` (config.py `_estimate_and_check_memory`)
+— it takes whichever of the two phases peaks, not their sum, since the
+arrival-time draw is freed before the solver arrays are touched. Which term
+wins depends on the dose rate: at 10 Gy/s the four carrier arrays (1.80 GiB,
+fixed by the grid) dominate; at 50 Gy/s the arrival-time draw for 123 M tracks
+(2 float64 arrays, 1.84 GiB) edges narrowly ahead of them. Both peak-RSS
+figures land above the estimate by roughly the same margin the single-thread
+run in this section found (12 %), a little more at 50 Gy/s — plausibly the
+larger transient allocation (1.84 GiB vs. 375 MiB at 10 Gy/s) leaves more
+allocator overhead behind it, though this hasn't been isolated further.
+Either way `memory_budget_fraction`'s default 0.8 headroom absorbs it with
+enormous room to spare on this 30.8 GiB laptop — the interesting case is a
+smaller machine, which is exactly what §7's `--dry-run` flag is for.
+
 ### Is it worth running?
 
 As a way to get an accurate `k_s`, no. The full electrode is still 0.1 % below
@@ -254,3 +288,82 @@ Plug in, use a performance profile, close everything else. See
 For parameter studies, run independent single-threaded processes — but expect
 well under linear aggregate throughput, for the same bandwidth and power reasons
 as above.
+
+## 7. Sizing a run before starting it: `--dry-run` and `--estimate-runtime-seconds`
+
+The `full_electrode` grid is 2 GiB on this laptop (§3); on a machine with less
+RAM to spare, or a grid pushed wider than this one, finding that out from the
+OOM killer partway through a 6–12 minute run is worse than finding out before
+it starts. Two flags on `run_markus_2mm.py` size a run without running all of
+it, for the two different questions "how much RAM?" and "how long?" — kept as
+two flags, not one, because a trustworthy answer to each costs something
+different.
+
+**`--dry-run`: memory only, instant, no allocation.** Builds the config (so
+the constructor's own memory guard has already run — see
+[`resources.py`](../pulsed_ion_chamber/resources.py)) and prints the sizing
+without touching the solver at all:
+
+```
+$ python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 2 --dry-run
+...
+--- dry run: memory ---
+Estimated peak allocation : 1.80 GiB
+Total RAM on this machine : 30.84 GiB
+Currently available RAM   : 19.75 GiB
+Budget (80% of available)    : 15.80 GiB
+Fits within budget        : yes
+
+No simulation was run (--dry-run).
+```
+
+This number is trustworthy directly — it is exactly
+`config.estimated_memory_bytes`, the figure §3 checked against measured peak
+RSS (12–18 % low, comfortably inside the default 80 % budget).
+`pulsed_ion_chamber.resources.memory_report()` is the reusable half of this —
+it takes any `(required_bytes, budget_fraction)` pair and returns the same
+required-vs-available comparison, so the same check can be dropped into
+another script without re-deriving it.
+
+**Runtime deliberately is not part of `--dry-run`.** An earlier version of
+this flag also printed a runtime estimate built from timing the unbatched,
+one-track-at-a-time kernel in isolation — which, on a grid this size, is
+**~500–1000× slower** than the batched backend a real `--threads 2` run
+actually uses (21 h estimated against a 382 s actual run). That number was
+never trustworthy enough to belong next to an instant, no-allocation flag,
+so it was removed rather than kept behind a caveat.
+
+**`--estimate-runtime-seconds N`: real backend, real grid, ~N seconds.**
+Allocates the full grid, warms up Numba, and runs the *actual* backend
+`--threads` would select — for real, just only for `N` seconds (default 5)
+instead of to completion — then extrapolates linearly from the measured
+per-step cost:
+
+```
+$ python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 2 --estimate-runtime-seconds 5
+...
+--- empirical runtime estimate: real solver_numba_parallel backend, 2 thread(s), ~5s sample ---
+steps measured            : 31 / 2,194
+measured time for those   : 5.03 s (162.2 ms/step)
+estimated total wall time : 356 s (0.099 h)
+
+No full run was performed (--estimate-runtime-seconds).
+```
+
+Measured against the actual 382 s full run (§3, same config): **356 s, a 7 %
+under-estimate** — two orders of magnitude closer than the isolated-kernel
+estimate above, because it exercises the batched deposition and the real
+thread count instead of a proxy for either. The 7 % gap has a specific cause
+worth knowing about on *this* class of machine: the 5 s sample is drawn from
+the first 31 steps, when the package is at its coolest; §4 already shows this
+laptop's sustained clock dropping from ~4790 MHz to ~4175 MHz as a
+full-electrode run heats it up, so an early sample runs faster than the run's
+own steady-state average. A cluster node that does not throttle (HELIOS.md)
+would not have this particular bias. Treat the result as same-order-of-magnitude,
+not a bound in either direction — see
+`pulsed_ion_chamber.benchmark.estimate_full_runtime_empirical` for the other
+contributor (missing the cheaper, deposition-free clearance-phase steps,
+which pulls the other way) and PERFORMANCE.md §7.
+
+`--dry-run` and `--estimate-runtime-seconds` are mutually exclusive: the
+former promises not to touch the solver, the latter always does.

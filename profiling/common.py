@@ -1,11 +1,9 @@
 """Shared harness config for the Phase-1 profiling/diagnostic exercise.
 
-Uses the exact "converged, ~6 track radii" grid documented in README.md's
-"Running on many cores" section (grid_size_um=5.0, sampled_radius_cm=0.012,
-same BEAM_KWARGS as examples/run_pulsed_proton_beam.py) -- the one config on
-which the batching fix and the "more threads = slower" pathology were
-originally observed, so numbers collected here are directly comparable to
-that README table.
+Uses the "converged, ~6 track radii" grid (grid_size_um=5.0,
+sampled_radius_cm=0.012) -- the one config on which the batching fix and the
+"more threads = slower" pathology were originally observed, so numbers
+collected here are directly comparable to each other across runs.
 """
 
 import resource

@@ -6,14 +6,14 @@
 # why each stage exists and what it is meant to show.
 #
 # Passed in as environment or defaults below:
-#   TIER, DOSE_RATES, THREAD_COUNTS, LADDERS, COOLDOWN, OUTROOT, REPO
+#   TIER, RADIUS_MM, DOSE_RATES, THREAD_COUNTS, LADDERS, COOLDOWN, OUTROOT, REPO
 
 set -uo pipefail
 REPO="${REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
 cd "$REPO"
 
 TIER="${TIER:-full_electrode}"
-RADIUS="${RADIUS:-}"                  # empty = use the tier's own radius
+RADIUS_MM="${RADIUS_MM:-}"            # mm; empty = use the tier's own radius
 DOSE_RATES="${DOSE_RATES:-50 10}"
 THREAD_COUNTS="${THREAD_COUNTS:-1 2 4 8}"
 LADDERS="${LADDERS:-perf}"
@@ -102,7 +102,7 @@ run_one() {
   local watcher=$!
 
   local radius_args=()
-  [ -n "$RADIUS" ] && radius_args=(--sampled-radius-cm "$RADIUS")
+  [ -n "$RADIUS_MM" ] && radius_args=(--sampled-radius-mm "$RADIUS_MM")
 
   local start; start=$(date +%s)
   taskset -c "$cpus" $PY -u examples/ifj_aic144/run_markus_2mm.py "$TIER" \
@@ -166,7 +166,7 @@ EOF
 
 # --- go ---------------------------------------------------------------------
 
-echo "tier        : ${TIER}${RADIUS:+ (radius overridden to ${RADIUS} cm)}"
+echo "tier        : ${TIER}${RADIUS_MM:+ (radius overridden to ${RADIUS_MM} mm)}"
 echo "ladders     : ${LADDERS}"
 echo "threads     : ${THREAD_COUNTS}"
 echo "dose rates  : ${DOSE_RATES} Gy/s to water"

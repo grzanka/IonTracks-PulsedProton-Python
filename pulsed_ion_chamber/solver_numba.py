@@ -35,6 +35,7 @@ unpacks the config once per call.
 """
 
 from math import ceil, exp, floor
+from time import perf_counter
 from typing import Optional
 
 import numba
@@ -218,7 +219,10 @@ def warmup() -> None:
 
 
 def run_simulation_numba(
-    config: SimulationConfig, rng: Optional[np.random.Generator] = None, progress: bool = True
+    config: SimulationConfig,
+    rng: Optional[np.random.Generator] = None,
+    progress: bool = True,
+    max_wall_s: Optional[float] = None,
 ) -> Result:
     """Simulate a pulse train and return the full run record.
 
@@ -226,6 +230,17 @@ def run_simulation_numba(
     hundreds or thousands of tracks per time step -- prefer
     :func:`~pulsed_ion_chamber.solver_numba_parallel.run_simulation_numba_parallel`,
     which batches the deposition; the two agree to 1e-9.
+
+    ``max_wall_s``, if given, stops the loop once that many seconds have
+    elapsed instead of running all ``config.total_time_steps`` -- for sizing a
+    run empirically (:func:`~pulsed_ion_chamber.benchmark.estimate_full_runtime_empirical`),
+    not for production use. The returned ``Result`` is then a snapshot at
+    whichever step it stopped on (later entries in its time-series arrays keep
+    their initial values, not real physics) with two extra attributes set:
+    ``steps_completed`` and ``loop_elapsed_s``, timed from just before the
+    first step to the stop -- everything the caller needs to extrapolate,
+    without this function knowing anything about how that extrapolation
+    works.
     """
     rng = rng if rng is not None else np.random.default_rng(config.seed)
     schedule = build_track_schedule(config, rng)
@@ -250,6 +265,8 @@ def run_simulation_numba(
     f_t: FloatArray1D = np.ones(config.total_time_steps)
     diagnostics = Diagnostics(config)
     report_every = max(1, config.total_time_steps // 20)
+    loop_t0 = perf_counter()
+    steps_completed = 0
 
     for step in range(config.total_time_steps):
         injected_this_step = 0.0
@@ -319,6 +336,14 @@ def run_simulation_numba(
         if progress and step % report_every == 0:
             print(f"  step {step + 1}/{config.total_time_steps}  f = {f_t[step]:.4f}")
 
+        steps_completed = step + 1
+        if max_wall_s is not None and (perf_counter() - loop_t0) >= max_wall_s:
+            break
+
     time_s: FloatArray1D = (np.arange(config.total_time_steps) + 1) * config.dt
     ks = 1.0 / f_t[-1]
-    return diagnostics.build_result(config, time_s, f_t, ks, positive_array, negative_array)
+    result = diagnostics.build_result(config, time_s, f_t, ks, positive_array, negative_array)
+    if max_wall_s is not None:
+        result.steps_completed = steps_completed
+        result.loop_elapsed_s = perf_counter() - loop_t0
+    return result

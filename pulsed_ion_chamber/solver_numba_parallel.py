@@ -513,6 +513,7 @@ def run_simulation_numba_parallel(
     progress: bool = True,
     num_threads: Optional[int] = None,
     phase_timing: bool = False,
+    max_wall_s: Optional[float] = None,
 ) -> Result:
     """Simulate a pulse train and return the full run record.
 
@@ -525,6 +526,12 @@ def run_simulation_numba_parallel(
     frequently *not* better: both kernels are memory-bandwidth-bound, so the
     sweep saturates within a couple of threads on a laptop. Measure before
     choosing -- docs/PERFORMANCE.md has the curve.
+
+    ``max_wall_s``, if given, stops the loop once that many seconds have
+    elapsed instead of running all ``config.total_time_steps`` -- see
+    :func:`~pulsed_ion_chamber.solver_numba.run_simulation_numba` for what
+    that does to the returned ``Result`` and the ``steps_completed`` /
+    ``loop_elapsed_s`` attributes it adds.
     """
     if num_threads is not None:
         # Clamped to the process CPU affinity mask and Numba's own maximum, so
@@ -571,6 +578,8 @@ def run_simulation_numba_parallel(
     # step, so the hot loop carries no string comparison.
     reflecting_wall = config.lateral_boundary == "reflecting"
     timer = _PhaseTimer(phase_timing)
+    loop_t0 = perf_counter()
+    steps_completed = 0
 
     for step in range(config.total_time_steps):
         injected_this_step = 0.0
@@ -677,9 +686,17 @@ def run_simulation_numba_parallel(
         if progress and step % report_every == 0:
             print(f"  step {step + 1}/{config.total_time_steps}  f = {f_t[step]:.4f}")
 
+        steps_completed = step + 1
+        if max_wall_s is not None and (perf_counter() - loop_t0) >= max_wall_s:
+            break
+
     if phase_timing:
         print(timer.report(config.total_time_steps))
 
     time_s: FloatArray1D = (np.arange(config.total_time_steps) + 1) * config.dt
     ks = 1.0 / f_t[-1]
-    return diagnostics.build_result(config, time_s, f_t, ks, positive_array, negative_array)
+    result = diagnostics.build_result(config, time_s, f_t, ks, positive_array, negative_array)
+    if max_wall_s is not None:
+        result.steps_completed = steps_completed
+        result.loop_elapsed_s = perf_counter() - loop_t0
+    return result

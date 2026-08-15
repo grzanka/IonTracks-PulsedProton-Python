@@ -230,9 +230,53 @@ python -c "import os; print(len(os.sched_getaffinity(0)))"
 
 ## 7. Estimating before running
 
+Two runtime estimators exist, trading speed for accuracy:
+
 `pulsed_ion_chamber.benchmark.estimate_full_runtime(config)` times a handful of
-track insertions and PDE steps on the config's actual grid and extrapolates,
-without running the simulation. Use it to size a job before submitting it. It
-reports the per-track and per-step costs separately, which also tells you which
-of the two phases in §1 a given scenario is bound by — and therefore which knob
-is worth turning.
+*isolated* track insertions and PDE steps on the config's actual grid and
+extrapolates, without allocating the full grid or running the simulation.
+Fast (milliseconds) and reports the per-track and per-step costs separately,
+which tells you which of the two phases in §1 a given scenario is bound by —
+and therefore which knob is worth turning. Its per-track sample always uses
+the unbatched kernel, though, so on a large, batched (`--threads > 1`) run its
+number can be **orders of magnitude** too high — on `full_electrode` it
+implies ~21 h single-threaded against a ~6 min actual 2-thread run. Treat it
+as a deposition-vs-PDE diagnostic, never as a wall-time prediction, for any
+config where `--threads > 1` matters.
+
+`pulsed_ion_chamber.benchmark.estimate_full_runtime_empirical(config,
+num_threads, max_wall_s=5.0)` instead runs the *real* backend `num_threads`
+would select (batched or not) on the *real* grid, for a real but
+wall-clock-bounded sample, and extrapolates linearly from what that actually
+measured. Slower to call — it commits the grid's full memory and pays the
+JIT warmup — but same-order-of-magnitude accurate rather than off by 2-3
+orders of it: measured 356 s against an actual 382 s on `full_electrode`,
+2 threads (a 7% under-estimate; see its docstring and
+[docs/BENCHMARKS-LAPTOP.md](BENCHMARKS-LAPTOP.md) sec. 7 for why the sign of
+the error is machine-dependent, not something to rely on).
+
+Memory gets a similar treatment, only cheaper: a full-electrode-sized grid is
+gigabytes, and finding that out from the OOM killer twenty minutes into a run
+is worse than finding out before it starts. `SimulationConfig` computes
+`estimated_memory_bytes` for every config (four carrier arrays, the
+arrival-time draw, and the batched backend's 2D scratch — whichever phase's
+allocation peaks) and refuses the config in its constructor if it exceeds
+`memory_budget_fraction` (default 0.8) of currently available RAM.
+`pulsed_ion_chamber.resources.memory_report(config.estimated_memory_bytes,
+config.memory_budget_fraction)` turns that into a human-readable comparison
+against this machine's total and available RAM -- and unlike either runtime
+estimator, it needs no sampling at all: it is exact arithmetic on the config,
+so it is instant and belongs behind a flag that promises not to touch the
+solver.
+
+`examples/ifj_aic144/run_markus_2mm.py` exposes memory sizing and runtime
+sizing as two separate, mutually exclusive flags rather than bundling them:
+`--dry-run` builds the config (so the memory guard has already run) and
+prints only the memory report, instantly and without allocating anything;
+`--estimate-runtime-seconds N` allocates the real grid and runs the real
+backend for `N` seconds (default 5) before extrapolating. Keeping them apart
+means `--dry-run` can keep its "instant, no allocation" promise, which a
+bundled runtime estimate — accurate or not — would break.
+[docs/BENCHMARKS-LAPTOP.md](BENCHMARKS-LAPTOP.md) sec. 3 has the measured peak
+RSS the memory estimate has been checked against on the full-electrode grid;
+sec. 7 has both CLI flags in full, with example output.
