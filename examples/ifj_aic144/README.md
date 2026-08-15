@@ -3,9 +3,10 @@
 Recombination in a PTW Markus 23343 plane-parallel ionisation chamber on the
 AIC-144 isochronous cyclotron proton beam at IFJ PAN.
 
-Two scripts, cleanly split by whether they touch the solver. Both take a tier
-name (`dev`, `archive`, `standard`, `wide`, `full_electrode` — see the results
-table below) that sets how much of the chamber is simulated.
+Two scripts, cleanly split by whether they touch the solver.
+`run_markus_2mm.py` takes a tier name (`dev`, `archive`, `standard`, `wide`,
+`full_electrode` — see the results table below) that sets how much of the
+chamber is simulated; `plot.py` instead reads a `--save-run` directory.
 
 ### Layer 1: `run_markus_2mm.py` — runs the simulation
 
