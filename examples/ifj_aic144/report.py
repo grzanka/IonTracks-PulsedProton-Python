@@ -12,6 +12,10 @@ Produces, in the output directory:
 
 Usage:
     python examples/ifj_aic144/report.py [tier] [output_dir]
+
+Always single-threaded. For a faster full_electrode run, drive the batched
+backend yourself at the thread count you want and pass the result to
+save_diagnostic_plots() -- see examples/README.md.
 """
 
 import sys

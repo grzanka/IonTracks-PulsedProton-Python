@@ -3,17 +3,31 @@
 Recombination in a PTW Markus 23343 plane-parallel ionisation chamber on the
 AIC-144 isochronous cyclotron proton beam at IFJ PAN.
 
+Two scripts, both taking a tier name (`dev`, `archive`, `standard`, `wide`,
+`full_electrode` — see the results table below) that sets how much of the
+chamber is simulated. Run the first to check a tier cheaply; run the second
+to get the full record — CSV and four plots — on disk.
+
+### Step 1: `run_markus_2mm.py` — check a tier, terminal output only
+
+Prints the config summary and `k_s`. Writes nothing to disk unless `--json`
+is given.
+
 ```bash
 python examples/ifj_aic144/run_markus_2mm.py [dev|archive|standard|wide|full_electrode]
-python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 24   # batched backend
+python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 2    # batched backend
 python examples/ifj_aic144/run_markus_2mm.py full_electrode --dry-run     # memory only, instant
-python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 24 --estimate-runtime-seconds 5
+python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 2 --estimate-runtime-seconds 5
+python examples/ifj_aic144/run_markus_2mm.py archive --json out.json      # also writes out.json
 ```
 
 `--threads N` switches to the batched, multi-core backend and is what makes the
-`full_electrode` tier affordable. On a Cyfronet Helios node it must be launched
-as its own `srun` step; see [`docs/HELIOS.md`](../../docs/HELIOS.md) for that
-and for how many cores to ask for.
+`full_electrode` tier affordable — 2 threads is the sweet spot on a laptop
+(~354 s vs. ~562 s single-threaded, same `k_s` to six digits; see
+[`docs/BENCHMARKS-LAPTOP.md`](../../docs/BENCHMARKS-LAPTOP.md) sec. 4). On a
+Cyfronet Helios node it must be launched as its own `srun` step, and the
+thread count that pays is larger than on a laptop; see
+[`docs/HELIOS.md`](../../docs/HELIOS.md) for how many cores to ask for.
 
 `--dry-run` prints the grid's peak memory allocation against what this machine
 actually has free, then exits without allocating anything — the way to find
@@ -29,6 +43,39 @@ guess built from isolated single-track timings — see
 [`docs/BENCHMARKS-LAPTOP.md`](../../docs/BENCHMARKS-LAPTOP.md) sec. 7 and
 [`docs/PERFORMANCE.md`](../../docs/PERFORMANCE.md) sec. 7. The two flags are
 mutually exclusive.
+
+`--json FILE` writes the tier, config, timing, peak RSS and `k_s` as JSON —
+the only thing this step saves to disk, and only if asked.
+
+### Step 2: `report.py` — the full run, with CSV and plots on disk
+
+Runs the same simulation in full (independently of Step 1 — this doesn't
+reuse that run, it's the one that produces files), always single-threaded,
+and writes, to `out/ifj_aic144/markus_2mm_<tier>/` by default:
+
+| file | contents |
+|---|---|
+| `collected_charge.csv` | per time step: time, n_positive, n_negative, injected_positive, injected_negative, recombination |
+| `track_density_xy.npy` | 2D array, tracks landed per xy voxel — the data behind `track_density_cross_section.png` |
+| `injection_rate.png` | beam arrival rate vs time |
+| `carrier_evolution.png` | carriers present vs time (positive/negative) |
+| `recombination_rate.png` | ion pairs lost per time step |
+| `track_density_cross_section.png` | where the tracks landed, in the xy plane |
+
+```bash
+python examples/ifj_aic144/report.py archive             # k_s + CSV + four plots, ~2 s
+python examples/ifj_aic144/report.py full_electrode       # same, full chamber radius, ~9-13 min on a laptop
+python examples/ifj_aic144/report.py full_electrode out/my_run   # custom output directory
+```
+
+`report.py` has no `--threads` flag on purpose: plotting itself is cheap and
+single-threaded regardless, and a threading option on the *reporting* script
+would misleadingly suggest reporting needs cores. What actually benefits
+from threads is the simulation `report.py` runs internally before it can
+plot. For a faster `full_electrode` run with plots, call the same three
+functions `report.py` calls yourself, with a thread count — see
+[`examples/README.md`](../README.md). A committed run record from this step
+lives in [`results/full_electrode/`](results/full_electrode/README.md).
 
 For what each assumption means and why it is made, see
 [`docs/PHYSICS.md`](../../docs/PHYSICS.md); for timings and scaling,
