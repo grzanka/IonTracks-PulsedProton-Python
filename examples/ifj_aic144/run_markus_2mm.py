@@ -11,7 +11,13 @@ docs/PERFORMANCE.md for timings and scaling.
 
 Run:  python examples/ifj_aic144/run_markus_2mm.py [tier] [--threads N]
             [--backend auto|serial|batched] [--dose-rate-water-Gy-s R] [--json FILE]
-            [--sampled-radius-mm R] [--dry-run] [--estimate-runtime-seconds N]
+            [--save-run DIR] [--sampled-radius-mm R] [--dry-run]
+            [--estimate-runtime-seconds N]
+
+`--save-run DIR` writes the full per-time-step record (CSV, track-density
+map, and the config scalars a plot needs) to DIR. This script never plots --
+`examples/ifj_aic144/plot.py DIR` draws the four diagnostic figures from what
+was saved, in a separate, solver-free step. See examples/README.md.
 
 The default is one thread and the unbatched backend, which is what the tier
 table below was measured with. `--threads N` switches to the batched backend
@@ -53,6 +59,7 @@ from pulsed_ion_chamber.constants import (
     ION_MOBILITY_NEGATIVE_CM2_VS,
     ION_MOBILITY_POSITIVE_CM2_VS,
 )
+from pulsed_ion_chamber.output import save_run_record
 from pulsed_ion_chamber.resources import format_bytes, memory_report
 from pulsed_ion_chamber.solver_numba import run_simulation_numba, warmup
 from pulsed_ion_chamber.solver_numba_parallel import run_simulation_numba_parallel, warmup_parallel
@@ -179,6 +186,7 @@ def main(
     sampled_radius_mm: float | None = None,
     dry_run: bool = False,
     estimate_runtime_seconds: float | None = None,
+    save_run: str | None = None,
 ) -> None:
     # The CLI takes mm (a chamber's collecting electrode is quoted in mm --
     # this one is 5.3 mm across -- and "2.65" reads better than "0.265").
@@ -286,6 +294,16 @@ def main(
         "\ncomparable until the density convention is reconciled; see README."
     )
 
+    if save_run:
+        # Everything examples/ifj_aic144/plot.py needs to draw the four
+        # diagnostic figures later, in a separate, solver-free process --
+        # see pulsed_ion_chamber.output.save_run_record.
+        paths = save_run_record(result, save_run)
+        print(f"\nWrote {paths['csv']}")
+        print(f"Wrote {paths['track_density']}")
+        print(f"Wrote {paths['meta']}")
+        print(f"\nPlot with: python examples/ifj_aic144/plot.py {save_run}")
+
     if json_path:
         # Machine-readable, so a Slurm job array or a scaling sweep can collect
         # runs without re-parsing the text above.
@@ -332,6 +350,16 @@ if __name__ == "__main__":
     )
     parser.add_argument("--json", default=None, help="also write the result as JSON")
     parser.add_argument(
+        "--save-run",
+        default=None,
+        metavar="DIR",
+        help=(
+            "write the full per-time-step record to DIR (collected_charge.csv, "
+            "track_density_xy.npy, run_meta.json) for `plot.py DIR` to draw the four "
+            "diagnostic figures from later, without rerunning the simulation"
+        ),
+    )
+    parser.add_argument(
         "--sampled-radius-mm",
         type=float,
         default=None,
@@ -375,4 +403,5 @@ if __name__ == "__main__":
         args.sampled_radius_mm,
         args.dry_run,
         args.estimate_runtime_seconds,
+        args.save_run,
     )

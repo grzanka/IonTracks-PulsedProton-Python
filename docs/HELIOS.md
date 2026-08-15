@@ -34,10 +34,19 @@ machine's (smaller) bandwidth. And **L3 is 768 MiB**, so a grid below roughly
 ## 2. Setup
 
 ```bash
-module load GCCcore/13.3.0 Python/3.12.3   # repeat in EVERY new shell
-source venv/bin/activate                    # the venv does not remember the module
+module load GCCcore/13.3.0 Python/3.12.3  # repeat in EVERY new shell
+```
+
+```bash
+source venv/bin/activate  # the venv does not remember the module
+```
+
+```bash
 pip install -e ".[dev]"
-pytest                                      # ~10 s, 65 tests
+```
+
+```bash
+pytest  # ~10 s, 65 tests
 ```
 
 `module load` must not be piped (`module load ... | tail` runs it in a subshell
@@ -297,24 +306,33 @@ The §4 and §5 tables, from a Helios **access** node (compute nodes cannot
 submit; Slurm's error is a bare "Access/permission denied"):
 
 ```bash
-./submit.sh --exclusive                        # 16 jobs, ~15 min if the queue is free
+./submit.sh --exclusive  # 16 jobs, ~15 min if the queue is free
+```
+
+```bash
 squeue -u $USER
-python profiling/cluster_scaling/collect.py     # tables, and the consistency checks
+```
+
+```bash
+python profiling/cluster_scaling/collect.py  # tables, and the consistency checks
 ```
 
 Drop `--exclusive` only for a rough look — see §4 for what it costs in accuracy.
 `profiling/cluster_scaling/README.md` explains the job layout.
 
-The supporting measurements, from inside an interactive allocation:
+The supporting measurements, from inside an interactive allocation.
+Per-phase kernel scaling, including the NUMA first-touch comparison (~3 min):
 
 ```bash
-# per-phase kernel scaling, including the NUMA first-touch comparison (~3 min)
 srun --overlap --ntasks=1 --cpus-per-task=190 --cpu-bind=none \
   python -m profiling.bench_kernels --tier full_electrode \
   --threads 1,8,24,48,96,190 --init both \
   --json profiling/data/bench_kernels_full_electrode.json
+```
 
-# one run with the per-phase breakdown of §8
+One run with the per-phase breakdown of §8:
+
+```bash
 srun --overlap --ntasks=1 --cpus-per-task=32 --cpu-bind=none python -c "
 import sys; sys.path.insert(0, 'examples/ifj_aic144')
 from run_markus_2mm import build_config

@@ -3,17 +3,49 @@
 Recombination in a PTW Markus 23343 plane-parallel ionisation chamber on the
 AIC-144 isochronous cyclotron proton beam at IFJ PAN.
 
+Two scripts, cleanly split by whether they touch the solver.
+`run_markus_2mm.py` takes a tier name (`dev`, `archive`, `standard`, `wide`,
+`full_electrode` — see the results table below) that sets how much of the
+chamber is simulated; `plot.py` instead reads a `--save-run` directory.
+
+### Layer 1: `run_markus_2mm.py` — runs the simulation
+
+Always prints the config summary and `k_s`. Writes nothing to disk unless
+asked; three independent flags each save something different.
+
 ```bash
 python examples/ifj_aic144/run_markus_2mm.py [dev|archive|standard|wide|full_electrode]
-python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 24   # batched backend
-python examples/ifj_aic144/run_markus_2mm.py full_electrode --dry-run     # memory only, instant
-python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 24 --estimate-runtime-seconds 5
+```
+
+```bash
+python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 2  # batched backend
+```
+
+```bash
+python examples/ifj_aic144/run_markus_2mm.py full_electrode --dry-run  # memory only, instant
+```
+
+```bash
+python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 2 --estimate-runtime-seconds 5
+```
+
+```bash
+python examples/ifj_aic144/run_markus_2mm.py archive --json out.json  # metrics-only JSON
+```
+
+```bash
+python examples/ifj_aic144/run_markus_2mm.py archive --save-run out/my_run  # full record, for plotting
 ```
 
 `--threads N` switches to the batched, multi-core backend and is what makes the
-`full_electrode` tier affordable. On a Cyfronet Helios node it must be launched
-as its own `srun` step; see [`docs/HELIOS.md`](../../docs/HELIOS.md) for that
-and for how many cores to ask for.
+`full_electrode` tier affordable — 2 threads is the sweet spot on a laptop
+(~354 s vs. ~562 s single-threaded, same `k_s` to six digits; see
+[`docs/BENCHMARKS-LAPTOP.md`](../../docs/BENCHMARKS-LAPTOP.md) sec. 4). On a
+Cyfronet Helios node it must be launched as its own `srun` step, and the
+thread count that pays is larger than on a laptop; see
+[`docs/HELIOS.md`](../../docs/HELIOS.md) for how many cores to ask for. This
+flag lives here and nowhere else in the pipeline, because this is the only
+script that runs the solver.
 
 `--dry-run` prints the grid's peak memory allocation against what this machine
 actually has free, then exits without allocating anything — the way to find
@@ -27,8 +59,46 @@ allocates the grid and runs the real backend (respecting `--threads`) for
 than `--dry-run` but far more trustworthy on a large, batched run than a
 guess built from isolated single-track timings — see
 [`docs/BENCHMARKS-LAPTOP.md`](../../docs/BENCHMARKS-LAPTOP.md) sec. 7 and
-[`docs/PERFORMANCE.md`](../../docs/PERFORMANCE.md) sec. 7. The two flags are
-mutually exclusive.
+[`docs/PERFORMANCE.md`](../../docs/PERFORMANCE.md) sec. 7. `--dry-run` and
+`--estimate-runtime-seconds` are mutually exclusive.
+
+`--json FILE` writes one lightweight JSON — tier, timing, peak RSS, `k_s` —
+what a Slurm job array or a scaling sweep collects.
+
+`--save-run DIR` writes what Layer 2 needs and nothing else:
+
+| file | contents |
+|---|---|
+| `collected_charge.csv` | per time step: time, n_positive, n_negative, injected_positive, injected_negative, recombination |
+| `track_density_xy.npy` | 2D array, tracks landed per xy voxel |
+| `run_meta.json` | the config scalars the plots read, plus `f`, `ks` and charge totals |
+
+### Layer 2: `plot.py` — draws the figures
+
+Reads a `--save-run` directory and writes four PNGs back into it (or a
+separate output directory) by default. No solver import, no Numba, no
+`--threads` — plotting doesn't run anything that threads could speed up, so
+the flag simply isn't there. A run performed once can be replotted any
+number of times, on a different machine, without ever repeating the
+simulation.
+
+| file | contents |
+|---|---|
+| `injection_rate.png` | beam arrival rate vs time |
+| `carrier_evolution.png` | carriers present vs time (positive/negative) |
+| `recombination_rate.png` | ion pairs lost per time step |
+| `track_density_cross_section.png` | where the tracks landed, in the xy plane |
+
+```bash
+python examples/ifj_aic144/plot.py out/my_run  # figures land in out/my_run/
+```
+
+```bash
+python examples/ifj_aic144/plot.py out/full out/full/figures  # or a separate output_dir
+```
+
+A committed run record from this pipeline lives in
+[`results/full_electrode/`](results/full_electrode/README.md).
 
 For what each assumption means and why it is made, see
 [`docs/PHYSICS.md`](../../docs/PHYSICS.md); for timings and scaling,

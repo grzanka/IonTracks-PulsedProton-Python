@@ -276,9 +276,18 @@ budget**, and anything past it is contention.
 ## 6. Running it yourself
 
 ```bash
-./bench_laptop.sh --stage topology   # instant, verifies core detection
-./bench_laptop.sh --stage cores      # ~10 min
-./bench_laptop.sh --stage scaling    # ~70 min
+./bench_laptop.sh --stage topology  # instant, verifies core detection
+```
+
+```bash
+./bench_laptop.sh --stage cores  # ~10 min
+```
+
+```bash
+./bench_laptop.sh --stage scaling  # ~70 min
+```
+
+```bash
 python profiling/cluster_scaling/collect.py profiling/data/laptop_scaling/perf
 ```
 

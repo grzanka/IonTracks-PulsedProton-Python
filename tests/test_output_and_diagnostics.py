@@ -7,6 +7,8 @@ from pulsed_ion_chamber.config import SimulationConfig
 from pulsed_ion_chamber.output import (
     COLLECTED_CHARGE_COLUMNS,
     collected_charge_table,
+    load_run_record,
+    save_run_record,
     track_density_per_cm2,
     write_collected_charge_csv,
 )
@@ -153,3 +155,47 @@ def test_plots_are_written(result, tmp_path):
         "track_density_cross_section.png",
     }
     assert all(p.stat().st_size > 5000 for p in paths)
+
+
+def test_save_run_record_round_trips_through_load_run_record(result, tmp_path):
+    """What `run_markus_2mm.py --save-run DIR` writes must be exactly what
+    `plot.py DIR` (load_run_record + save_diagnostic_plots_from_table) needs --
+    this is the contract that lets plotting happen without a solver."""
+    paths = save_run_record(result, tmp_path)
+    assert set(paths) == {"csv", "track_density", "meta"}
+    for path in paths.values():
+        assert path.exists()
+
+    loaded = load_run_record(tmp_path)
+    table = collected_charge_table(result)
+    for name in COLLECTED_CHARGE_COLUMNS:
+        np.testing.assert_allclose(loaded.table[name], table[name], rtol=1e-11)
+    np.testing.assert_array_equal(loaded.track_density_xy, result.track_density_xy)
+    for field in ("dt", "pulse_duration_s", "no_xy", "unit_length_cm", "inner_radius", "chamber_fill_fraction"):
+        assert getattr(loaded.config, field) == pytest.approx(getattr(result.config, field))
+    assert loaded.meta["ks"] == pytest.approx(result.ks, rel=1e-9)
+    assert loaded.meta["tracks_per_pulse"] == result.config.number_of_tracks_per_pulse
+
+
+def test_load_run_record_reports_which_file_is_missing(tmp_path):
+    with pytest.raises(FileNotFoundError, match="collected_charge.csv"):
+        load_run_record(tmp_path)
+
+
+def test_plots_from_a_saved_run_match_plotting_live(result, tmp_path):
+    """The whole point of the save/load round trip: a figure drawn from a
+    saved run must be indistinguishable in size/shape from one drawn straight
+    off the live Result -- same code path, same data, different source."""
+    from pulsed_ion_chamber.plots import save_diagnostic_plots, save_diagnostic_plots_from_table
+
+    live_paths = save_diagnostic_plots(result, tmp_path / "live", title="live")
+
+    save_run_record(result, tmp_path / "saved")
+    loaded = load_run_record(tmp_path / "saved")
+    density = loaded.track_density_xy / loaded.config.unit_length_cm**2
+    replayed_paths = save_diagnostic_plots_from_table(
+        loaded.config, loaded.table, density, tmp_path / "replayed", title="replayed"
+    )
+
+    assert {p.name for p in live_paths} == {p.name for p in replayed_paths}
+    assert all(p.stat().st_size > 5000 for p in replayed_paths)

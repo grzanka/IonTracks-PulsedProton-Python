@@ -5,11 +5,22 @@ simulation, 1–8 threads, on a hybrid laptop CPU. Produces the tables in
 [`docs/BENCHMARKS-LAPTOP.md`](../../docs/BENCHMARKS-LAPTOP.md).
 
 ```bash
-./bench_laptop.sh --stage topology   # instant: what cores this machine has
-./bench_laptop.sh --stage cores      # ~10 min: P-cores vs E-cores
-./bench_laptop.sh --stage scaling    # ~70 min: the 1/2/4/8 ladder
-./bench_laptop.sh                    # all three
+./bench_laptop.sh --stage topology  # instant: what cores this machine has
+```
 
+```bash
+./bench_laptop.sh --stage cores  # ~10 min: P-cores vs E-cores
+```
+
+```bash
+./bench_laptop.sh --stage scaling  # ~70 min: the 1/2/4/8 ladder
+```
+
+```bash
+./bench_laptop.sh  # all three
+```
+
+```bash
 python profiling/cluster_scaling/collect.py profiling/data/laptop_scaling/perf
 ```
 

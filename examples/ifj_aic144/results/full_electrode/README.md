@@ -4,7 +4,11 @@ The AIC-144 Markus 2 mm macropulse scenario at the full PTW 23343 collecting
 electrode (r = 2.65 mm), reproduced with:
 
 ```bash
-python examples/ifj_aic144/report.py full_electrode examples/ifj_aic144/results/full_electrode
+python examples/ifj_aic144/run_markus_2mm.py full_electrode --save-run examples/ifj_aic144/results/full_electrode
+```
+
+```bash
+python examples/ifj_aic144/plot.py examples/ifj_aic144/results/full_electrode
 ```
 
 | | |

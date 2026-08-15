@@ -12,6 +12,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUN_MARKUS_2MM = REPO_ROOT / "examples" / "ifj_aic144" / "run_markus_2mm.py"
+PLOT = REPO_ROOT / "examples" / "ifj_aic144" / "plot.py"
 
 
 def test_dry_run_exits_without_simulating():
@@ -107,3 +108,52 @@ def test_dry_run_and_estimate_runtime_are_mutually_exclusive():
     )
     assert result.returncode != 0
     assert "not allowed with argument" in result.stderr
+
+
+def test_save_run_then_plot_is_the_documented_two_step_pipeline(tmp_path):
+    """run_markus_2mm.py --save-run DIR, then plot.py DIR: the two-layer
+    replacement for the old single-script report.py, run as subprocesses the
+    way examples/README.md tells a user to run them."""
+    run_dir = tmp_path / "run"
+    run_result = subprocess.run(
+        [sys.executable, str(RUN_MARKUS_2MM), "dev", "--save-run", str(run_dir)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert run_result.returncode == 0, run_result.stderr
+    assert (run_dir / "collected_charge.csv").exists()
+    assert (run_dir / "track_density_xy.npy").exists()
+    assert (run_dir / "run_meta.json").exists()
+    assert f"python examples/ifj_aic144/plot.py {run_dir}" in run_result.stdout
+
+    plot_result = subprocess.run(
+        [sys.executable, str(PLOT), str(run_dir)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert plot_result.returncode == 0, plot_result.stderr
+    for name in (
+        "injection_rate.png",
+        "carrier_evolution.png",
+        "recombination_rate.png",
+        "track_density_cross_section.png",
+    ):
+        path = run_dir / name
+        assert path.exists()
+        assert path.stat().st_size > 5000
+
+
+def test_plot_reports_a_missing_run_directory():
+    result = subprocess.run(
+        [sys.executable, str(PLOT), "/nonexistent/run/dir"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode != 0
+    assert "collected_charge.csv" in result.stderr

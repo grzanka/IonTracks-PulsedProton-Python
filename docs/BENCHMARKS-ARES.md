@@ -52,13 +52,34 @@ domain, 24 one socket, 48 the node. Those are where the curve should bend.
 
 ## 2. Setup
 
+On an Ares access node:
+
 ```bash
-# on an Ares access node
-git clone <repo> && cd IonTracks-PulsedProton-Python
+git clone <repo>
+```
+
+```bash
+cd IonTracks-PulsedProton-Python
+```
+
+```bash
 module load python/3.12.3-gcccore-13.3.0
-python -m venv venv && source venv/bin/activate
+```
+
+```bash
+python -m venv venv
+```
+
+```bash
+source venv/bin/activate
+```
+
+```bash
 pip install -e ".[dev]"
-pytest                                       # ~10 s, 65 tests
+```
+
+```bash
+pytest  # ~10 s, 65 tests
 ```
 
 **The module name differs from Helios's, the software does not.** Ares spells it
@@ -75,9 +96,18 @@ than falling through to a system python without numba.
 ## 3. Running the study
 
 ```bash
-./submit.sh --dry-run    # confirm site, account, partition, ladder
-./submit.sh              # 14 jobs: 7 thread counts x 2 dose rates
+./submit.sh --dry-run  # confirm site, account, partition, ladder
+```
+
+```bash
+./submit.sh  # 14 jobs: 7 thread counts x 2 dose rates
+```
+
+```bash
 squeue -u $USER
+```
+
+```bash
 python profiling/cluster_scaling/collect.py profiling/data/ares_scaling
 ```
 
