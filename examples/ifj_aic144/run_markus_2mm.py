@@ -11,7 +11,7 @@ docs/PERFORMANCE.md for timings and scaling.
 
 Run:  python examples/ifj_aic144/run_markus_2mm.py [tier] [--threads N]
             [--backend auto|serial|batched] [--dose-rate-water-Gy-s R] [--json FILE]
-            [--dry-run] [--estimate-runtime-seconds N]
+            [--sampled-radius-mm R] [--dry-run] [--estimate-runtime-seconds N]
 
 The default is one thread and the unbatched backend, which is what the tier
 table below was measured with. `--threads N` switches to the batched backend
@@ -142,12 +142,18 @@ def build_config(
     not at all -- which makes it the cleanest way to move this problem from
     PDE-bound to deposition-bound. 50 Gy/s is the FLASH-adjacent case.
 
-    ``sampled_radius_cm`` overrides the tier's column radius. The tiers are a
-    ladder of *scientific* interest, and the sizes that fall between them can
-    matter for a different reason: what a benchmark needs is a grid on the
-    correct side of the machine's last-level cache, and on a laptop every named
-    tier below `full_electrode` fits in L3. Setting the radius directly is how
-    `bench_laptop.sh` gets a DRAM-resident grid that still costs minutes.
+    ``sampled_radius_cm`` overrides the tier's column radius, in cm -- the
+    convention every other length in this codebase uses (docs/PHYSICS.md,
+    GRID_TIERS above). The CLI's ``--sampled-radius-mm`` is in mm instead (a
+    Markus electrode is quoted in mm) and converts to this at the argument
+    boundary in ``main()``, below.
+
+    The tiers are a ladder of *scientific* interest, and the sizes that fall
+    between them can matter for a different reason: what a benchmark needs is
+    a grid on the correct side of the machine's last-level cache, and on a
+    laptop every named tier below `full_electrode` fits in L3. Setting the
+    radius directly is how `bench_laptop.sh` gets a DRAM-resident grid that
+    still costs minutes.
     """
     if tier not in GRID_TIERS:
         raise ValueError(f"Unknown tier {tier!r}; expected one of {sorted(GRID_TIERS)}.")
@@ -170,10 +176,16 @@ def main(
     json_path: str | None = None,
     backend: str = "auto",
     dose_rate_water_Gy_s: float = DEFAULT_DOSE_RATE_WATER_GY_S,
-    sampled_radius_cm: float | None = None,
+    sampled_radius_mm: float | None = None,
     dry_run: bool = False,
     estimate_runtime_seconds: float | None = None,
 ) -> None:
+    # The CLI takes mm (a chamber's collecting electrode is quoted in mm --
+    # this one is 5.3 mm across -- and "2.65" reads better than "0.265").
+    # build_config()/SimulationConfig keep the whole codebase's cm convention
+    # (docs/PHYSICS.md, GRID_TIERS above, every other length here), so the
+    # conversion happens once, right at this boundary.
+    sampled_radius_cm = None if sampled_radius_mm is None else sampled_radius_mm / 10.0
     config = build_config(tier, dose_rate_water_Gy_s, sampled_radius_cm)
     # "auto": one thread keeps the unbatched backend, so a plain run reproduces
     # the tier table; more than one needs the batched backend, the only one
@@ -312,10 +324,10 @@ if __name__ == "__main__":
     )
     parser.add_argument("--json", default=None, help="also write the result as JSON")
     parser.add_argument(
-        "--sampled-radius-cm",
+        "--sampled-radius-mm",
         type=float,
         default=None,
-        help="override the tier's column radius (for sizing a grid against a cache)",
+        help="override the tier's column radius, in mm (for sizing a grid against a cache)",
     )
     parser.add_argument(
         "--dose-rate-water-Gy-s",
@@ -352,7 +364,7 @@ if __name__ == "__main__":
         args.json,
         args.backend,
         args.dose_rate_water_Gy_s,
-        args.sampled_radius_cm,
+        args.sampled_radius_mm,
         args.dry_run,
         args.estimate_runtime_seconds,
     )

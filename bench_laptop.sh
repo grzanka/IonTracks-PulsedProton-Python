@@ -42,9 +42,9 @@ TIER="full_electrode"
 # or it measures clock and IPC rather than the memory behaviour this whole
 # investigation is about. Every named tier below full_electrode fits in a
 # laptop's ~12 MiB L3 (`wide` is 11.3 MiB), so the radius is set directly:
-# r = 0.09 cm is a 186^2 x 210 grid, 222 MiB of carrier arrays -- comfortably
+# r = 0.9 mm is a 186^2 x 210 grid, 222 MiB of carrier arrays -- comfortably
 # DRAM-resident -- at 12 % of the full electrode's cost.
-CORE_STUDY_RADIUS_CM="0.09"
+CORE_STUDY_RADIUS_MM="0.9"
 DOSE_RATES="50 10"
 THREAD_COUNTS="1 2 4 8"
 COOLDOWN=60
@@ -122,7 +122,7 @@ export REPO COOLDOWN
 # same memory controller.
 if [ "$STAGE" = "all" ] || [ "$STAGE" = "cores" ]; then
   echo "=== core-type study: P vs E, 186^2 x 210 grid (222 MiB, DRAM-resident) ==="
-  RADIUS="$CORE_STUDY_RADIUS_CM" \
+  RADIUS_MM="$CORE_STUDY_RADIUS_MM" \
   LADDERS="perf econ" \
   THREAD_COUNTS="1 2 4" \
   DOSE_RATES="50" \
