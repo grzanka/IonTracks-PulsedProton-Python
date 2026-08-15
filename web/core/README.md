@@ -37,7 +37,7 @@ This is a deliberately scoped-down port, not a 1:1 translation -- see
    directly from the repo's Python `theory.jaffe_ks` (mpmath, 50 digits).
    `solver::tests::single_track_matches_jaffe_theory` then reproduces
    `tests/test_single_track_vs_jaffe.py`'s exact scenario (single track, three
-   seeds) and checks the *simulated* recombination against that analytic
+   seeds) and checks the _simulated_ recombination against that analytic
    reference, at the same 30%-relative tolerance the Python test uses --
    this crate's `sampler` module seeds a different PRNG than NumPy's (see its
    module docs), so exact reproduction isn't the goal; physical correctness
