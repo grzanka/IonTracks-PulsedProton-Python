@@ -19,10 +19,19 @@ config summary and `k_s`. Writes nothing to disk by default; two flags each
 save something different:
 
 ```bash
-python examples/ifj_aic144/run_markus_2mm.py dev                          # prints only, ~0.2 s
-python examples/ifj_aic144/run_markus_2mm.py archive --json out.json      # + a metrics-only JSON
-python examples/ifj_aic144/run_markus_2mm.py archive --save-run out/my_run   # + the full record, for plotting
-python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 2 --save-run out/full   # same, faster
+python examples/ifj_aic144/run_markus_2mm.py dev  # prints only, ~0.2 s
+```
+
+```bash
+python examples/ifj_aic144/run_markus_2mm.py archive --json out.json  # + a metrics-only JSON
+```
+
+```bash
+python examples/ifj_aic144/run_markus_2mm.py archive --save-run out/my_run  # + the full record, for plotting
+```
+
+```bash
+python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 2 --save-run out/full  # same, faster
 ```
 
 `--json FILE` writes one lightweight JSON (tier, timing, peak RSS, `k_s`) —
@@ -59,7 +68,10 @@ directory by default:
 | `track_density_cross_section.png` | where the tracks landed, in the xy plane |
 
 ```bash
-python examples/ifj_aic144/plot.py out/my_run                 # figures land in out/my_run/
+python examples/ifj_aic144/plot.py out/my_run  # figures land in out/my_run/
+```
+
+```bash
 python examples/ifj_aic144/plot.py out/full out/full/figures  # or a separate output_dir
 ```
 

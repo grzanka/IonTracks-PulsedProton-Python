@@ -14,11 +14,26 @@ asked; three independent flags each save something different.
 
 ```bash
 python examples/ifj_aic144/run_markus_2mm.py [dev|archive|standard|wide|full_electrode]
-python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 2    # batched backend
-python examples/ifj_aic144/run_markus_2mm.py full_electrode --dry-run     # memory only, instant
+```
+
+```bash
+python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 2  # batched backend
+```
+
+```bash
+python examples/ifj_aic144/run_markus_2mm.py full_electrode --dry-run  # memory only, instant
+```
+
+```bash
 python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 2 --estimate-runtime-seconds 5
-python examples/ifj_aic144/run_markus_2mm.py archive --json out.json           # metrics-only JSON
-python examples/ifj_aic144/run_markus_2mm.py archive --save-run out/my_run     # full record, for plotting
+```
+
+```bash
+python examples/ifj_aic144/run_markus_2mm.py archive --json out.json  # metrics-only JSON
+```
+
+```bash
+python examples/ifj_aic144/run_markus_2mm.py archive --save-run out/my_run  # full record, for plotting
 ```
 
 `--threads N` switches to the batched, multi-core backend and is what makes the
@@ -74,7 +89,10 @@ simulation.
 | `track_density_cross_section.png` | where the tracks landed, in the xy plane |
 
 ```bash
-python examples/ifj_aic144/plot.py out/my_run                 # figures land in out/my_run/
+python examples/ifj_aic144/plot.py out/my_run  # figures land in out/my_run/
+```
+
+```bash
 python examples/ifj_aic144/plot.py out/full out/full/figures  # or a separate output_dir
 ```
 

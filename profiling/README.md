@@ -87,27 +87,51 @@ would silently report 1 otherwise, and every timing below would be
 meaningless).
 
 ```bash
-module load GCCcore/13.3.0 Python/3.12.3   # repeat in every new shell
+module load GCCcore/13.3.0 Python/3.12.3  # repeat in every new shell
+```
+
+```bash
 source venv/bin/activate
-pip install -e ".[profiling]"              # adds py-spy
+```
 
-# 1) thread x threading-layer sweep (~15-20 min; loops srun internally)
+```bash
+pip install -e ".[profiling]"  # adds py-spy
+```
+
+1) thread x threading-layer sweep (~15-20 min; loops srun internally):
+
+```bash
 bash profiling/run_sweep.sh
+```
 
-# 2) numba parallel_diagnostics + numactl/lscpu + affinity dump
+2) numba parallel_diagnostics + numactl/lscpu + affinity dump:
+
+```bash
 srun --overlap --ntasks=1 --cpus-per-task=8 --cpu-bind=none \
   python -m profiling.diagnostics
+```
 
-# 3) Jaffe cross-check + f(t) curves at 1 and 96 threads
+3) Jaffe cross-check + f(t) curves at 1 and 96 threads:
+
+```bash
 srun --overlap --ntasks=1 --cpus-per-task=96 --cpu-bind=none \
   python -m profiling.scientific_validation
+```
 
-# 4) py-spy flamegraphs at 1 and 96 threads (loops srun internally)
+4) py-spy flamegraphs at 1 and 96 threads (loops srun internally):
+
+```bash
 bash profiling/pyspy_record.sh
+```
 
-# 5) cProfile at 1 and 96 threads
+5) cProfile at 1 and 96 threads:
+
+```bash
 srun --overlap --ntasks=1 --cpus-per-task=1 --cpu-bind=none \
   python -m profiling.cprofile_run --threads 1 --out-prefix profiling/data/cprofile_1threads
+```
+
+```bash
 srun --overlap --ntasks=1 --cpus-per-task=96 --cpu-bind=none \
   python -m profiling.cprofile_run --threads 96 --out-prefix profiling/data/cprofile_96threads
 ```

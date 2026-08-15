@@ -31,11 +31,26 @@ granularity of individual tracks that drives the recombination.
 
 ```bash
 python -m venv venv
+```
+
+```bash
 source venv/bin/activate
+```
+
+```bash
 pip install -e ".[dev]"
-pytest                                                                 # ~20 s
+```
+
+```bash
+pytest  # ~20 s
+```
+
+```bash
 python examples/ifj_aic144/run_markus_2mm.py archive --save-run out/archive  # ~2 s, writes a CSV
-python examples/ifj_aic144/plot.py out/archive                              # + four plots
+```
+
+```bash
+python examples/ifj_aic144/plot.py out/archive  # + four plots
 ```
 
 ```python

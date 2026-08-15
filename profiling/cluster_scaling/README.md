@@ -5,9 +5,18 @@ on an HPC node. Produces the tables in [`docs/HELIOS.md`](../../docs/HELIOS.md)
 §4–§5 and [`docs/BENCHMARKS-ARES.md`](../../docs/BENCHMARKS-ARES.md) §6.
 
 ```bash
-./submit.sh --dry-run                          # confirm the detected machine
-./submit.sh                                    # from a Helios or Ares ACCESS node
+./submit.sh --dry-run  # confirm the detected machine
+```
+
+```bash
+./submit.sh  # from a Helios or Ares ACCESS node
+```
+
+```bash
 squeue -u $USER
+```
+
+```bash
 python profiling/cluster_scaling/collect.py profiling/data/<site>_scaling
 ```
 
@@ -96,11 +105,23 @@ the requested thread count and dies immediately if they disagree, and
 ## Adjusting it
 
 ```bash
-./submit.sh --threads "1 8 64"       # subset of thread counts
-./submit.sh --rates "50"             # one dose rate
-./submit.sh --account plgXXXX-cpu    # charge a different grant
-./submit.sh --mem 16G                # more memory per job
-./submit.sh --dry-run                # print what would be submitted
+./submit.sh --threads "1 8 64"  # subset of thread counts
+```
+
+```bash
+./submit.sh --rates "50"  # one dose rate
+```
+
+```bash
+./submit.sh --account plgXXXX-cpu  # charge a different grant
+```
+
+```bash
+./submit.sh --mem 16G  # more memory per job
+```
+
+```bash
+./submit.sh --dry-run  # print what would be submitted
 ```
 
 The walltimes in `submit_all.sh` are ~2× the measured run times: 30 min for the
