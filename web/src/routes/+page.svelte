@@ -1,20 +1,32 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import LinePlot from "$lib/components/LinePlot.svelte";
+  import UnitField from "$lib/components/UnitField.svelte";
   import { estimate, loadWasm, type Estimate, type SimParams } from "$lib/wasm-core/loader";
   import { SimulationController } from "$lib/sim/controller";
   import type { ProgressChunk } from "$lib/sim/protocol";
   import { formatBytes, formatCount, siScale } from "$lib/format";
+  import {
+    DOSE_RATE_UNITS,
+    ENERGY_UNITS,
+    GAP_LENGTH_UNITS,
+    MARKUS_FULL_RADIUS_CM,
+    PULSE_TIME_UNITS,
+    RADIUS_LENGTH_UNITS,
+    VOLTAGE_UNITS,
+  } from "$lib/units";
 
   type Phase = "setup" | "running" | "done" | "cancelled" | "error";
 
   let wasmReady = $state(false);
+  // All in the base unit each UnitField below converts to/from -- see
+  // $lib/units.ts's per-table doc comments.
   let eMevU = $state(56.2);
   let voltageV = $state(300);
   let electrodeGapCm = $state(0.2);
   let doseRateGyS = $state(8.91);
-  let pulseDurationUs = $state(540);
-  let sampledRadiusMm = $state(0.08);
+  let pulseDurationS = $state(540e-6);
+  let sampledRadiusCm = $state(0.008);
   let seed = $state(1);
 
   let phase = $state<Phase>("setup");
@@ -37,14 +49,14 @@
       voltageV,
       electrodeGapCm,
       doseRateGyS,
-      pulseDurationS: pulseDurationUs * 1e-6,
-      sampledRadiusCm: sampledRadiusMm * 0.1,
+      pulseDurationS,
+      sampledRadiusCm,
     };
   }
 
-  // Recomputed synchronously on every slider change -- estimate() is
-  // instant and allocation-free (core/src/lib.rs), so this is safe to call
-  // directly from a derived value rather than routing it through the worker.
+  // Recomputed synchronously on every field change -- estimate() is instant
+  // and allocation-free (core/src/lib.rs), so this is safe to call directly
+  // from a derived value rather than routing it through the worker.
   let sizing = $derived.by<Estimate | undefined>(() => {
     if (!wasmReady) return undefined;
     // Referencing every input so this recomputes when any of them change.
@@ -52,10 +64,12 @@
     void voltageV;
     void electrodeGapCm;
     void doseRateGyS;
-    void pulseDurationUs;
-    void sampledRadiusMm;
+    void pulseDurationS;
+    void sampledRadiusCm;
     return estimate(currentParams());
   });
+
+  let radiusPercentOfMarkus = $derived((sampledRadiusCm / MARKUS_FULL_RADIUS_CM) * 100);
 
   onMount(() => {
     loadWasm().then(() => {
@@ -151,36 +165,55 @@
     <section class="panel">
       <h2>1. Configure a run</h2>
       <div class="grid">
-        <label>
-          Proton energy
-          <input type="range" min="10" max="250" step="1" bind:value={eMevU} />
-          <span class="value">{eMevU.toFixed(0)} MeV</span>
-        </label>
-        <label>
-          Voltage
-          <input type="range" min="50" max="1000" step="10" bind:value={voltageV} />
-          <span class="value">{voltageV.toFixed(0)} V</span>
-        </label>
-        <label>
-          Electrode gap
-          <input type="range" min="0.05" max="1.0" step="0.01" bind:value={electrodeGapCm} />
-          <span class="value">{electrodeGapCm.toFixed(2)} cm</span>
-        </label>
-        <label>
-          Dose rate (to air)
-          <input type="range" min="0.1" max="100" step="0.1" bind:value={doseRateGyS} />
-          <span class="value">{doseRateGyS.toFixed(1)} Gy/s</span>
-        </label>
-        <label>
-          Pulse duration
-          <input type="range" min="50" max="2000" step="10" bind:value={pulseDurationUs} />
-          <span class="value">{pulseDurationUs.toFixed(0)} µs</span>
-        </label>
-        <label>
-          Sampled column radius
-          <input type="range" min="0.03" max="0.25" step="0.01" bind:value={sampledRadiusMm} />
-          <span class="value">{sampledRadiusMm.toFixed(2)} mm</span>
-        </label>
+        <UnitField
+          label="Proton energy"
+          units={ENERGY_UNITS}
+          defaultUnitSymbol="MeV"
+          bind:value={eMevU}
+          min={10}
+          max={250}
+        />
+        <UnitField
+          label="Voltage"
+          units={VOLTAGE_UNITS}
+          defaultUnitSymbol="V"
+          bind:value={voltageV}
+          min={50}
+          max={1000}
+        />
+        <UnitField
+          label="Electrode gap"
+          units={GAP_LENGTH_UNITS}
+          defaultUnitSymbol="cm"
+          bind:value={electrodeGapCm}
+          min={0.05}
+          max={1.0}
+        />
+        <UnitField
+          label="Dose rate (to air)"
+          units={DOSE_RATE_UNITS}
+          defaultUnitSymbol="Gy/s"
+          bind:value={doseRateGyS}
+          min={0.1}
+          max={100}
+        />
+        <UnitField
+          label="Pulse duration"
+          units={PULSE_TIME_UNITS}
+          defaultUnitSymbol="µs"
+          bind:value={pulseDurationS}
+          min={50e-6}
+          max={2000e-6}
+        />
+        <UnitField
+          label="Sampled column radius"
+          units={RADIUS_LENGTH_UNITS}
+          defaultUnitSymbol="mm"
+          bind:value={sampledRadiusCm}
+          min={0.003}
+          max={0.025}
+          hint={`≈ ${radiusPercentOfMarkus.toFixed(1)}% of the full Markus PTW 23343 chamber radius (2.65 mm)`}
+        />
       </div>
       <div class="seed-row">
         <label class="seed-label">
@@ -215,6 +248,10 @@
             <div>
               <dt>Time step (dt)</dt>
               <dd>{sizing.dtNs.toFixed(1)} ns</dd>
+            </div>
+            <div>
+              <dt>% of full Markus radius</dt>
+              <dd>{radiusPercentOfMarkus.toFixed(1)}%</dd>
             </div>
           </dl>
           <p class="ok-note">Within this prototype's browser safety limits.</p>
@@ -344,12 +381,6 @@
     gap: 0.25rem;
   }
 
-  .value {
-    font-variant-numeric: tabular-nums;
-    color: #0f172a;
-    font-weight: 600;
-  }
-
   .seed-row {
     display: flex;
     align-items: flex-end;
@@ -370,13 +401,15 @@
 
   .estimate div {
     display: flex;
-    justify-content: space-between;
+    flex-direction: column;
+    gap: 0.1rem;
     border-bottom: 1px dashed #e2e8f0;
-    padding-bottom: 0.15rem;
+    padding-bottom: 0.3rem;
   }
 
   .estimate dt {
     color: #64748b;
+    font-size: 0.8rem;
   }
 
   .estimate dd {
