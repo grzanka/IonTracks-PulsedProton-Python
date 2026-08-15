@@ -16,6 +16,16 @@ updates:
     directory: "/web/core"
     schedule:
       interval: "weekly"
+    groups:
+      # rand_pcg's PCG64 impl depends on the same rand_core version rand
+      # itself pins, so bumping one without the other breaks the build with
+      # two incompatible rand_core traits in scope (hit this for real going
+      # 0.8/0.3 -> 0.10/0.10 -- see the PR that added this grouping).
+      rand:
+        patterns:
+          - "rand"
+          - "rand_core"
+          - "rand_pcg"
 
   # Action version pins (e.g. actions/checkout@v4) never update on their own.
   - package-ecosystem: "github-actions"
