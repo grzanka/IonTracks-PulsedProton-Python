@@ -1,0 +1,118 @@
+name: CI
+
+# Covers the web/ prototype (web/core's Rust crate + the SvelteKit app in
+# web/) only -- the Python package's own tests are run separately (pytest,
+# see the top-level README) and aren't wired into GitHub Actions here.
+
+on:
+  push:
+    branches: [master, "claude/**", "feature/**", "fix/**"]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/core
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: web/core
+
+      - name: Check formatting (rustfmt)
+        run: cargo fmt --check
+
+      - name: Lint (clippy)
+        run: cargo clippy --all-targets -- -D warnings
+
+      # Native, not wasm32 -- much faster, and the physics doesn't depend on
+      # the compile target (theory::tests + solver::tests are the ones that
+      # matter; see core/src/lib.rs's module docs).
+      - name: Test
+        run: cargo test
+
+      - name: Build for wasm32-unknown-unknown
+        run: cargo build --target wasm32-unknown-unknown --release
+
+  web:
+    name: Web (format, lint, typecheck, build)
+    runs-on: ubuntu-latest
+    needs: [rust]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: web/core
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh -s -- -y
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the wasm package
+        working-directory: web
+        run: pnpm run build:wasm
+
+      - name: Check formatting (Prettier)
+        working-directory: web
+        run: pnpm run format:check
+
+      - name: Lint (ESLint)
+        working-directory: web
+        run: pnpm run lint
+
+      - name: Type-check (svelte-check + tsc)
+        working-directory: web
+        run: pnpm run check
+
+      - name: Build the static site
+        working-directory: web
+        run: pnpm run build
+
+      - name: Upload build output (for inspection / the deploy workflow)
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: web/build
+          retention-days: 7
