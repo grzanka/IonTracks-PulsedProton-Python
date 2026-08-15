@@ -9,6 +9,14 @@ Four views, each answering a different question:
 
 Axes are auto-scaled to a readable unit (µs, and a power-of-ten multiple of
 ion pairs) rather than left in raw SI, because these are read by eye.
+
+The drawing itself (:func:`save_diagnostic_plots_from_table`) only needs the
+per-time-step table, the track-density map and a handful of config scalars --
+not a live solver `Result`. That is what lets `examples/ifj_aic144/plot.py`
+draw these figures from a run someone else already performed and saved,
+without importing Numba or touching a thread count at all.
+:func:`save_diagnostic_plots` is the convenience wrapper for the common case
+of plotting straight from a `Result` in memory.
 """
 
 from pathlib import Path
@@ -16,9 +24,9 @@ from typing import Union
 
 import numpy as np
 
-from pulsed_ion_chamber.output import collected_charge_table, track_density_per_cm2
+from pulsed_ion_chamber.output import collected_charge_table
 
-__all__ = ["save_diagnostic_plots"]
+__all__ = ["save_diagnostic_plots", "save_diagnostic_plots_from_table"]
 
 _SI_PREFIXES = ((1e12, "T"), (1e9, "G"), (1e6, "M"), (1e3, "k"), (1.0, ""))
 
@@ -37,7 +45,32 @@ def _scale(values) -> tuple:
 
 
 def save_diagnostic_plots(result, directory: Union[str, Path], title: str = "") -> list:
-    """Write the four diagnostic figures; return the paths written."""
+    """Write the four diagnostic figures for a `Result` still in memory.
+
+    Thin wrapper around :func:`save_diagnostic_plots_from_table` -- see there
+    for what each figure shows and what it needs.
+    """
+    table = collected_charge_table(result)
+    voxel_area_cm2 = result.config.unit_length_cm**2
+    density = result.track_density_xy / voxel_area_cm2
+    return save_diagnostic_plots_from_table(result.config, table, density, directory, title)
+
+
+def save_diagnostic_plots_from_table(
+    config, table: dict, track_density_per_cm2: np.ndarray, directory: Union[str, Path], title: str = ""
+) -> list:
+    """Write the four diagnostic figures from already-computed data.
+
+    ``config`` needs only the scalars the figures actually use: `dt`,
+    `pulse_duration_s`, `no_xy`, `unit_length_cm`, `inner_radius`,
+    `sampling_radius`, `chamber_fill_fraction` -- a full `SimulationConfig`
+    satisfies this, and so does the lightweight stand-in
+    `pulsed_ion_chamber.output.load_run_record` builds from a saved run's
+    `run_meta.json`, which is how `examples/ifj_aic144/plot.py` calls this
+    without ever constructing a real one. ``table`` is the same shape
+    `collected_charge_table` returns: `time`, `n_positive`, `n_negative`,
+    `injected_positive`, `recombination`, all in ion pairs.
+    """
     import matplotlib
 
     matplotlib.use("Agg")  # no display needed, and none may exist on a cluster
@@ -45,8 +78,6 @@ def save_diagnostic_plots(result, directory: Union[str, Path], title: str = "") 
 
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    config = result.config
-    table = collected_charge_table(result)
     t_us = table["time"] * 1e6
     dt_us = config.dt * 1e6
     pulse_end_us = config.pulse_duration_s * 1e6
@@ -94,7 +125,7 @@ def save_diagnostic_plots(result, directory: Union[str, Path], title: str = "") 
     finish(fig, ax, "recombination_rate.png")
 
     # --- 4. track areal density cross-section ------------------------------
-    density = track_density_per_cm2(result)
+    density = track_density_per_cm2
     div, prefix = _scale(density.ravel())
     half_um = 0.5 * config.no_xy * config.unit_length_cm * 1e4
     extent = (-half_um, half_um, -half_um, half_um)

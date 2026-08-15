@@ -6,65 +6,65 @@
 
 ## `ifj_aic144/`
 
-Two entry points, both selecting how much of the chamber to simulate via a
-tier name (`dev`, `archive`, `standard`, `wide`, `full_electrode` — 0.2 s to
-several minutes; see [`ifj_aic144/README.md`](ifj_aic144/README.md) for the
-scenario parameters and per-tier results):
+Two layers, cleanly split: `run_markus_2mm.py` runs the simulation (with the
+performance and sizing flags that involves), `plot.py` only draws figures
+from what was saved — it never touches the solver and has no thread count of
+its own. Both take a tier name (`dev`, `archive`, `standard`, `wide`,
+`full_electrode` — 0.2 s to several minutes; see
+[`ifj_aic144/README.md`](ifj_aic144/README.md) for the scenario parameters
+and per-tier results) where relevant.
 
-**Step 1 — `run_markus_2mm.py`: check a tier cheaply, terminal output only.**
-Prints the config summary and `k_s`; writes nothing to disk unless `--json`
-is given. Use this to explore tiers, or to size a big one with `--dry-run` /
-`--estimate-runtime-seconds` before committing to it (below).
+**Layer 1 — `run_markus_2mm.py`: run the simulation.** Always prints the
+config summary and `k_s`. Writes nothing to disk by default; two flags each
+save something different:
 
 ```bash
-python examples/ifj_aic144/run_markus_2mm.py dev                     # smoke test, ~0.2 s, prints only
-python examples/ifj_aic144/run_markus_2mm.py archive                 # prints k_s, ~2 s
-python examples/ifj_aic144/run_markus_2mm.py archive --json out.json # same, also writes out.json
+python examples/ifj_aic144/run_markus_2mm.py dev                          # prints only, ~0.2 s
+python examples/ifj_aic144/run_markus_2mm.py archive --json out.json      # + a metrics-only JSON
+python examples/ifj_aic144/run_markus_2mm.py archive --save-run out/my_run   # + the full record, for plotting
+python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 2 --save-run out/full   # same, faster
 ```
 
-**Step 2 — `report.py`: the full run, with CSV and plots on disk.** Runs the
-same simulation in full (it does not reuse Step 1's run — Step 1 is for
-sizing/checking first, this is the one that produces files), always
-single-threaded, and writes, to `out/ifj_aic144/markus_2mm_<tier>/` by
-default:
+`--json FILE` writes one lightweight JSON (tier, timing, peak RSS, `k_s`) —
+what a Slurm job array or a scaling sweep collects; see
+[`docs/PERFORMANCE.md`](../docs/PERFORMANCE.md) sec. 7.
+
+`--save-run DIR` writes what **Layer 2** needs and nothing else:
 
 | file | contents |
 |---|---|
 | `collected_charge.csv` | per time step: time, n_positive, n_negative, injected_positive, injected_negative, recombination |
-| `track_density_xy.npy` | 2D array, tracks landed per xy voxel — the data behind `track_density_cross_section.png` |
+| `track_density_xy.npy` | 2D array, tracks landed per xy voxel |
+| `run_meta.json` | the handful of config scalars the plots read, plus `f`, `ks` and charge totals |
+
+`--threads N` (default 1, batched backend once N > 1) is what makes
+`full_electrode` affordable here — 2 threads is the laptop sweet spot
+(~354 s vs. ~562 s single-threaded, same `k_s` to six digits — see
+[`docs/BENCHMARKS-LAPTOP.md`](../docs/BENCHMARKS-LAPTOP.md) sec. 4). It lives
+on this script because it's the one that runs the solver; `plot.py` below has
+no such flag because it never does.
+
+`--dry-run` and `--estimate-runtime-seconds N` size a bigger tier before
+committing to it — see [`docs/PERFORMANCE.md`](../docs/PERFORMANCE.md) sec. 7.
+
+**Layer 2 — `plot.py`: draw the figures.** Reads a `--save-run` directory —
+no solver import, no Numba, no `--threads` — and writes, back into that same
+directory by default:
+
+| file | contents |
+|---|---|
 | `injection_rate.png` | beam arrival rate vs time |
 | `carrier_evolution.png` | carriers present vs time (positive/negative) |
 | `recombination_rate.png` | ion pairs lost per time step |
 | `track_density_cross_section.png` | where the tracks landed, in the xy plane |
 
 ```bash
-python examples/ifj_aic144/report.py archive                 # k_s + CSV + four plots, ~2 s
-python examples/ifj_aic144/report.py full_electrode          # same, full chamber radius, ~9-13 min on a laptop
+python examples/ifj_aic144/plot.py out/my_run                 # figures land in out/my_run/
+python examples/ifj_aic144/plot.py out/full out/full/figures  # or a separate output_dir
 ```
 
-`report.py` deliberately has no `--threads` flag — plotting itself is cheap
-and single-threaded regardless, and a threading option on a script named
-"report" would misleadingly suggest the *reporting* needs cores. What
-actually benefits from threads is the simulation `report.py` runs internally
-before it can plot. To get that speed-up (2 threads is the laptop sweet
-spot: ~354 s vs. ~562 s single-threaded for `full_electrode`, same `k_s` to
-six digits — see [`docs/BENCHMARKS-LAPTOP.md`](../docs/BENCHMARKS-LAPTOP.md)
-sec. 4) while still getting plots, call the same three functions `report.py`
-calls, yourself, with a thread count:
-
-```python
-from pulsed_ion_chamber.output import write_collected_charge_csv
-from pulsed_ion_chamber.plots import save_diagnostic_plots
-from pulsed_ion_chamber.solver_numba_parallel import run_simulation_numba_parallel, warmup_parallel
-from run_markus_2mm import build_config  # examples/ifj_aic144/run_markus_2mm.py
-
-config = build_config("full_electrode")
-warmup_parallel()
-result = run_simulation_numba_parallel(config, progress=True, num_threads=2)
-write_collected_charge_csv(result, "out/my_run/collected_charge.csv")
-save_diagnostic_plots(result, "out/my_run")
-```
-
-See `results/full_electrode/` for a committed `report.py` run record, and
-[`docs/PERFORMANCE.md`](../docs/PERFORMANCE.md) sec. 7 for what
-`--dry-run` / `--estimate-runtime-seconds` on `run_markus_2mm.py` report.
+Because plotting only reads files, the same `--save-run` directory can be
+replotted any number of times, moved to another machine, or handed to
+someone who never runs the simulation at all — none of which was possible
+while a single script did both jobs. See `results/full_electrode/` for a
+committed run record.
