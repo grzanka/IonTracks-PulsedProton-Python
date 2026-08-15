@@ -69,6 +69,34 @@ def test_estimate_runtime_seconds_runs_a_real_short_sample():
     assert "\nwrote " not in out
 
 
+def test_estimate_runtime_seconds_respects_explicit_backend_override():
+    """--backend batched --threads 1 must sample the batched backend, not the
+    num_threads==1 default of unbatched -- regression test for the mismatch
+    where the header text (built from the resolved --backend/--threads
+    decision) and the actual sampled backend (previously re-derived from
+    num_threads alone inside estimate_full_runtime_empirical) could disagree.
+    See test_runtime_estimate.py for the same check below the CLI layer."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(RUN_MARKUS_2MM),
+            "dev",
+            "--backend",
+            "batched",
+            "--threads",
+            "1",
+            "--estimate-runtime-seconds",
+            "5",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "real solver_numba_parallel backend, 1 thread(s)" in result.stdout
+
+
 def test_dry_run_and_estimate_runtime_are_mutually_exclusive():
     result = subprocess.run(
         [sys.executable, str(RUN_MARKUS_2MM), "dev", "--dry-run", "--estimate-runtime-seconds", "5"],

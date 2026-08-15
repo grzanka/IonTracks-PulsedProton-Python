@@ -69,6 +69,24 @@ def test_estimate_full_runtime_empirical_uses_batched_backend_above_one_thread()
     assert est["exact"] is True
 
 
+def test_estimate_full_runtime_empirical_batched_override_beats_num_threads():
+    """The `batched` param must win over the num_threads-derived default --
+    this is what lets a caller mirror an already-resolved --backend decision
+    (run_markus_2mm.py's `batched` local) instead of estimate_full_runtime_empirical
+    silently re-deriving a possibly different one from num_threads alone."""
+    config = SimulationConfig(**SMALL)
+
+    # --backend batched --threads 1: real run uses the batched backend even
+    # though num_threads == 1 would default to unbatched.
+    est = estimate_full_runtime_empirical(config, num_threads=1, max_wall_s=30.0, batched=True)
+    assert est["backend"] == "solver_numba_parallel"
+
+    # --backend serial --threads 2: real run uses the unbatched backend even
+    # though num_threads == 2 would default to batched.
+    est = estimate_full_runtime_empirical(config, num_threads=2, max_wall_s=30.0, batched=False)
+    assert est["backend"] == "solver_numba"
+
+
 def test_estimate_full_runtime_empirical_rejects_a_budget_too_small_for_one_step(monkeypatch):
     """steps_measured == 0 can only happen if the config has no steps at
     all -- simulated here rather than hunted for on real hardware, since a

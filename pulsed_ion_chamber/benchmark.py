@@ -124,7 +124,7 @@ def estimate_full_runtime(config, n_track_samples=10, n_step_samples=3, rng=None
     }
 
 
-def estimate_full_runtime_empirical(config, num_threads=1, max_wall_s=5.0, rng=None):
+def estimate_full_runtime_empirical(config, num_threads=1, max_wall_s=5.0, rng=None, batched=None):
     """Run the *real* backend on the *real* grid for a short wall-clock
     budget, then extrapolate linearly from the measured per-step cost --
     instead of :func:`estimate_full_runtime`'s isolated single-track/single-step
@@ -138,12 +138,17 @@ def estimate_full_runtime_empirical(config, num_threads=1, max_wall_s=5.0, rng=N
     This commits real memory (the four carrier arrays, same as a production
     run -- see ``config.estimated_memory_bytes``) and pays the one-off Numba
     JIT compile in full (excluded from the timing, same as a real run pays it
-    once and amortises it). ``num_threads == 1`` uses the unbatched backend
-    (:func:`~pulsed_ion_chamber.solver_numba.run_simulation_numba`); anything
-    higher uses the batched one
+    once and amortises it). By default (``batched=None``) ``num_threads == 1``
+    uses the unbatched backend
+    (:func:`~pulsed_ion_chamber.solver_numba.run_simulation_numba`) and
+    anything higher uses the batched one
     (:func:`~pulsed_ion_chamber.solver_numba_parallel.run_simulation_numba_parallel`)
-    -- the same "auto" rule ``run_markus_2mm.py`` uses -- so the measured cost
-    is the one the requested thread count would actually pay.
+    -- the same "auto" rule ``run_markus_2mm.py`` uses when its own
+    ``--backend`` is left at ``auto``. Pass ``batched`` explicitly to override
+    that rule (mirroring ``--backend serial``/``--backend batched``), so the
+    backend actually measured always matches the one a real run of the same
+    flags would use -- the two must not be resolved independently, or the
+    sample can silently time the wrong code path.
 
     The extrapolation is linear in step count and does not separate
     deposition-heavy (in-pulse) steps from PDE-only (clearance) ones the way
@@ -169,7 +174,7 @@ def estimate_full_runtime_empirical(config, num_threads=1, max_wall_s=5.0, rng=N
     run is just that run -- and ``exact`` is True.
     """
     rng = rng if rng is not None else np.random.default_rng(config.seed)
-    batched = num_threads != 1
+    batched = (num_threads != 1) if batched is None else batched
 
     if batched:
         threads_used = clamp_thread_count(num_threads)

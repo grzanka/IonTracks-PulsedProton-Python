@@ -228,7 +228,15 @@ def main(
             f"--- empirical runtime estimate: real {backend} backend, {threads} thread(s), "
             f"~{estimate_runtime_seconds:g}s sample ---"
         )
-        est = estimate_full_runtime_empirical(config, num_threads=threads, max_wall_s=estimate_runtime_seconds)
+        # Pass the already-resolved `batched` decision (from --backend/--threads
+        # above, line 199) explicitly rather than letting the estimator
+        # re-derive it from num_threads alone -- otherwise `--backend batched
+        # --threads 1` or `--backend serial --threads 8` would sample a
+        # different backend than the header just printed and a real run would
+        # actually use.
+        est = estimate_full_runtime_empirical(
+            config, num_threads=threads, max_wall_s=estimate_runtime_seconds, batched=batched
+        )
         print(f"steps measured            : {est['steps_measured']:,} / {est['total_time_steps']:,}")
         print(
             f"measured time for those   : {est['elapsed_measured_s']:.2f} s "
