@@ -10,18 +10,24 @@
 //! - **`lateral_boundary` is always `"reflecting"`**, `scoring_region` is
 //!   always `"track_disc"`, `n_pulses` is always `1`, `particle` is always
 //!   `"proton"`, `chamber_fill_fraction` is always `1.0`.
-//! - `grid_size_um`, `buffer_radius`, `no_z_electrode`, `track_cutoff_sigmas`,
+//! - `buffer_radius`, `no_z_electrode`, `track_cutoff_sigmas`,
 //!   `repetition_rate_hz` and `n_clearance_separation_times` are fixed
 //!   constants (`config` module) -- cost-model levers, not physics intuition,
-//!   per issue #6 sec. 6.
+//!   per issue #6 sec. 6. `grid_size_um` *is* adjustable (see below); the
+//!   others stayed fixed because they're numerical margin, not something a
+//!   user has physical intuition for.
 //! - The track-density cross-section (a full 2D field) is not scored; only
 //!   the four scalar time series (`n+`, `n-`, `injected`, `recombination`)
 //!   this prototype's live plots need.
 //!
 //! Adjustable: beam energy, voltage, electrode gap, dose rate, pulse
-//! duration, and the sampled column radius -- each checked against a hard
-//! browser-safety ceiling in [`config::Config::build`] before any grid is
-//! allocated.
+//! duration, the sampled column radius, and the grid spacing (`grid_size_um`)
+//! -- each checked against a hard browser-safety ceiling in
+//! [`config::Config::build`] before any grid is allocated. The ceilings are
+//! expressed in the *derived* quantities (voxel count, byte count, track
+//! count, step count), not in the input parameters themselves, so they catch
+//! an expensive config regardless of which knob (a wide radius, a fine
+//! grid_size_um, or some combination) drove it there.
 //!
 //! ## Layout
 //!
@@ -76,11 +82,20 @@ pub struct Estimate {
     pub total_time_steps: i32,
     pub number_of_tracks_per_pulse: f64,
     pub estimated_memory_bytes: f64,
+    /// Rough, desktop-class guess -- see
+    /// [`config::Config::rough_wall_seconds_estimate`]. There's no Rust-side
+    /// "measure it for real" counterpart: the Worker does that directly,
+    /// driving [`WasmSimulation::step`] for a few wall-clock seconds and
+    /// extrapolating from the real, on-device rate -- the same
+    /// `estimate()`-then-`WasmSimulation` split this whole module doc
+    /// describes, just with a short timed sample instead of a full run.
+    pub estimated_wall_seconds_rough: f64,
     pub dt_ns: f64,
     pub let_kev_um: f64,
     pub track_radius_um: f64,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_params(
     e_mev_u: f64,
     voltage_v: f64,
@@ -88,6 +103,7 @@ fn build_params(
     dose_rate_gy_s: f64,
     pulse_duration_s: f64,
     sampled_radius_cm: f64,
+    grid_size_um: f64,
     seed: f64,
 ) -> Params {
     Params {
@@ -97,6 +113,7 @@ fn build_params(
         dose_rate_gy_s,
         pulse_duration_s,
         sampled_radius_cm,
+        grid_size_um,
         seed: seed as u64,
     }
 }
@@ -110,6 +127,7 @@ pub fn estimate(
     dose_rate_gy_s: f64,
     pulse_duration_s: f64,
     sampled_radius_cm: f64,
+    grid_size_um: f64,
 ) -> Estimate {
     let params = build_params(
         e_mev_u,
@@ -118,6 +136,7 @@ pub fn estimate(
         dose_rate_gy_s,
         pulse_duration_s,
         sampled_radius_cm,
+        grid_size_um,
         1.0,
     );
     match Config::build(params) {
@@ -129,6 +148,7 @@ pub fn estimate(
             total_time_steps: c.total_time_steps as i32,
             number_of_tracks_per_pulse: c.number_of_tracks_per_pulse as f64,
             estimated_memory_bytes: c.estimated_memory_bytes,
+            estimated_wall_seconds_rough: c.rough_wall_seconds_estimate(),
             dt_ns: c.dt * 1e9,
             let_kev_um: c.let_kev_um,
             track_radius_um: c.track_radius_cm * 1e4,
@@ -141,6 +161,7 @@ pub fn estimate(
             total_time_steps: 0,
             number_of_tracks_per_pulse: 0.0,
             estimated_memory_bytes: 0.0,
+            estimated_wall_seconds_rough: 0.0,
             dt_ns: 0.0,
             let_kev_um: 0.0,
             track_radius_um: 0.0,
@@ -169,6 +190,7 @@ impl WasmSimulation {
         dose_rate_gy_s: f64,
         pulse_duration_s: f64,
         sampled_radius_cm: f64,
+        grid_size_um: f64,
         seed: f64,
     ) -> WasmSimulation {
         let params = build_params(
@@ -178,6 +200,7 @@ impl WasmSimulation {
             dose_rate_gy_s,
             pulse_duration_s,
             sampled_radius_cm,
+            grid_size_um,
             seed,
         );
         match Config::build(params) {

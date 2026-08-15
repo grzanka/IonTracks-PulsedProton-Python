@@ -18,12 +18,19 @@ has the exact list.
 The UI is two phases, on purpose -- so nothing runs until you've seen what it
 costs:
 
-1. **Configure.** Six sliders (energy, voltage, electrode gap, dose rate,
-   pulse duration, sampled column radius) plus a seed. Every change instantly
-   recomputes the grid size, track count, time-step count and estimated peak
-   memory (no allocation yet -- this is the wasm analogue of the Python
-   package's `--dry-run`) and checks it against this prototype's hard
-   browser-safety limits.
+1. **Configure.** Seven number-with-units fields (energy, voltage, electrode
+   gap, dose rate, pulse duration, sampled column radius, grid spacing) --
+   type a bare number in the field's selected unit, or a number with an
+   inline unit suffix ("100 keV"), and switch units on the fly with the
+   button group next to each field (following
+   [APTG/dedx_web](https://github.com/APTG/dedx_web)'s calculator). Every
+   change instantly recomputes the grid size, track count, time-step count
+   and estimated peak memory (no allocation yet -- this is the wasm analogue
+   of the Python package's `--dry-run`) and checks it against this
+   prototype's hard browser-safety limits -- the run's own random seed isn't
+   exposed; a fresh one is drawn each time you click "Run simulation", since
+   the statistical scatter between runs of the same config is real physics
+   (`docs/PHYSICS.md` sec. 14), not something to hide behind a fixed default.
 2. **Run.** Only once you click "Run simulation" does anything execute. It
    runs in a Web Worker (so the page stays responsive and Cancel actually
    works), streaming the carrier-evolution and recombination-rate plots back

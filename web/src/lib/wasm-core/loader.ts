@@ -29,6 +29,7 @@ export interface SimParams {
   doseRateGyS: number;
   pulseDurationS: number;
   sampledRadiusCm: number;
+  gridSizeUm: number;
 }
 
 export interface Estimate {
@@ -39,6 +40,11 @@ export interface Estimate {
   totalTimeSteps: number;
   numberOfTracksPerPulse: number;
   estimatedMemoryBytes: number;
+  /** Rough, desktop-class guess -- see core/src/config.rs's
+   * `rough_wall_seconds_estimate` doc comment. Not a promise; pair with an
+   * on-device measurement (sim/worker.ts's `estimate_time` message) for a
+   * real number. */
+  estimatedWallSecondsRough: number;
   dtNs: number;
   letKevUm: number;
   trackRadiusUm: number;
@@ -53,6 +59,7 @@ export function estimate(params: SimParams): Estimate {
     params.doseRateGyS,
     params.pulseDurationS,
     params.sampledRadiusCm,
+    params.gridSizeUm,
   );
   return {
     ok: e.ok,
@@ -62,6 +69,7 @@ export function estimate(params: SimParams): Estimate {
     totalTimeSteps: e.total_time_steps,
     numberOfTracksPerPulse: e.number_of_tracks_per_pulse,
     estimatedMemoryBytes: e.estimated_memory_bytes,
+    estimatedWallSecondsRough: e.estimated_wall_seconds_rough,
     dtNs: e.dt_ns,
     letKevUm: e.let_kev_um,
     trackRadiusUm: e.track_radius_um,

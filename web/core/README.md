@@ -2,7 +2,10 @@
 
 Rust port of the two hot loops in `pulsed_ion_chamber` (the drift-diffusion-
 recombination solver), compiled to WebAssembly via `wasm-bindgen`/`wasm-pack`
-for the browser prototype in `web/`. See
+for the browser prototype in `web/`. Deposition is batched (`solver.rs`'s
+module docs) rather than a direct port of the simpler per-track backend this
+crate started with -- unbatched deposition re-walks the whole electrode gap
+for every track, which stopped being cheap once wider radii were allowed. See
 [issue #6](https://github.com/grzanka/IonTracks-PulsedProton-Python/issues/6)
 for the feasibility writeup this implements the first milestone of.
 
@@ -15,15 +18,22 @@ This is a deliberately scoped-down port, not a 1:1 translation -- see
   two-Kanai-species option (`docs/PHYSICS.md` sec. 8) isn't ported.
 - `lateral_boundary` is always `"reflecting"`, `scoring_region` always
   `"track_disc"`, `n_pulses` always `1`, `particle` always `"proton"`.
-- `grid_size_um`, `buffer_radius`, `no_z_electrode`, `track_cutoff_sigmas`,
+- `buffer_radius`, `no_z_electrode`, `track_cutoff_sigmas`,
   `repetition_rate_hz` and `n_clearance_separation_times` are fixed
   constants -- cost-model levers, not physics intuition (see
-  `docs/PERFORMANCE.md` in the repo root), hidden so the exposed sliders
-  can't accidentally leave the browser's time/RAM budget.
-- Two hard, independent safety ceilings (`config::MAX_*`) bound worst-case
-  memory and wall time regardless of what the UI's own slider ranges allow --
-  defense in depth, matching `SimulationConfig`'s own "refuse rather than
-  OOM twenty minutes in" philosophy.
+  `docs/PERFORMANCE.md` in the repo root), hidden so the UI's inputs can't
+  accidentally leave the browser's time/RAM budget through those knobs.
+  `grid_size_um` _is_ exposed (default 10 µm, matching the library default).
+- Hard, independent safety ceilings (`config::MAX_*`) bound memory (a real
+  byte count), CPU time (`MAX_TOTAL_VOXEL_STEPS` -- `total_time_steps *
+voxels`, not raw grid size; see that constant's doc comment for why and
+  for the measured ~8.2 ns/voxel-step this crate's cost model is calibrated
+  from), track count, and step count -- regardless of which input parameter
+  drove a config there. Defense in depth, matching `SimulationConfig`'s own
+  "refuse rather than OOM twenty minutes in" philosophy. The Worker also
+  offers an on-device empirical measurement (run the real backend for a few
+  seconds, extrapolate) alongside the instant analytical guess -- the wasm
+  analogue of `benchmark.estimate_full_runtime_empirical`.
 - The track-density cross-section (a full 2D field) isn't scored -- only the
   four scalar time series (`n+`, `n-`, `injected`, `recombination`) the
   browser's live plots need.

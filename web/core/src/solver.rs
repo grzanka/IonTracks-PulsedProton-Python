@@ -1,9 +1,17 @@
 //! The two hot loops (track deposition, Lax-Wendroff update) and the
-//! `Simulation` struct that drives them one time step at a time. Ports
-//! `pulsed_ion_chamber/solver_numba.py` -- the unbatched backend, which is
-//! also the *right* backend at this prototype's scale (few tracks per step;
-//! see `ALGORITHM.md` sec. 5 and sec. 9 on when batching pays and when it's
-//! pure overhead).
+//! `Simulation` struct that drives them one time step at a time. Deposition
+//! ports `pulsed_ion_chamber/solver_numba_parallel.py`'s *batching* (not its
+//! threading, which this single-threaded prototype has no use for): sum a
+//! step's tracks into a 2D scratch array first, then broadcast down every
+//! gap layer once per step instead of once per track (`ALGORITHM.md` sec. 5).
+//! This crate's first version ported the simpler unbatched backend instead,
+//! reasoning that this prototype's capped grids meant few tracks per step --
+//! true at the original 30-250um radius range, but measurably false once
+//! larger radii were allowed: a ~600-tracks/step config measured 120ms/step
+//! unbatched (each track's deposit re-walking all `no_z` layers), batching
+//! cut that to single-digit ms/step. The Lax-Wendroff update stays a direct
+//! port of `solver_numba.py`'s serial version either way -- it has no
+//! per-track structure to batch.
 //!
 //! Grid layout matches the Python code on purpose: one flat buffer per
 //! carrier, `(no_xy, no_xy, no_z_with_buffer)` with `k` (along the field)
@@ -31,58 +39,87 @@ impl Grid {
     }
 }
 
-/// Deposit one track's separable, truncated Gaussian into both carrier
-/// arrays; returns the charge that landed inside the scored disc. Ports
-/// `solver_numba._insert_track_numba` -- see that function's docstring (and
-/// `ALGORITHM.md` sec. 4) for why this costs `2w` exponentials and
-/// `w^2 * no_z` additions rather than `w^2 * no_z` exponentials.
+/// Phase 1 of batched deposition: accumulate one track's separable,
+/// truncated Gaussian into the *step's* 2D scratch density -- not yet
+/// broadcast down `z`. Costs `2w` exponentials and `w^2` additions (no `no_z`
+/// factor, unlike the unbatched form) -- see `ALGORITHM.md` sec. 4 for the
+/// separable-Gaussian identity and sec. 5 for why summing 2D profiles first
+/// and broadcasting once is exact, not approximate (addition is
+/// associative: `sum_t broadcast(g_t) == broadcast(sum_t g_t)`).
 #[allow(clippy::too_many_arguments)]
-fn insert_track(
+fn accumulate_track_2d(
     grid: &Grid,
-    positive: &mut [f64],
-    negative: &mut [f64],
+    total_density: &mut [f64],
     x: f64,
     y: f64,
     h2: f64,
     b2: f64,
     gaussian_factor: f64,
     cutoff_voxels: f64,
-) -> f64 {
+    gauss_i: &mut Vec<f64>,
+    gauss_j: &mut Vec<f64>,
+) {
     let no_xy = grid.no_xy as i64;
     let i_lo = ((x - cutoff_voxels).ceil() as i64).max(0);
     let i_hi = (((x + cutoff_voxels).floor() as i64) + 1).min(no_xy);
     let j_lo = ((y - cutoff_voxels).ceil() as i64).max(0);
     let j_hi = (((y + cutoff_voxels).floor() as i64) + 1).min(no_xy);
     if i_lo >= i_hi || j_lo >= j_hi {
-        return 0.0;
+        return;
     }
 
-    let gauss_i: Vec<f64> = (i_lo..i_hi)
-        .map(|i| (-((i as f64 - x).powi(2)) * h2 / b2).exp())
-        .collect();
-    let gauss_j: Vec<f64> = (j_lo..j_hi)
-        .map(|j| (-((j as f64 - y).powi(2)) * h2 / b2).exp())
-        .collect();
+    // Reused across every track in the step (and across steps): `.clear()`
+    // keeps the underlying heap allocation, so after the first call (with
+    // the widest stencil this config produces) this is allocation-free.
+    gauss_i.clear();
+    gauss_i.extend((i_lo..i_hi).map(|i| (-((i as f64 - x).powi(2)) * h2 / b2).exp()));
+    gauss_j.clear();
+    gauss_j.extend((j_lo..j_hi).map(|j| (-((j as f64 - y).powi(2)) * h2 / b2).exp()));
 
-    let k_lo = grid.no_z_electrode;
-    let k_hi = grid.no_z_electrode + grid.no_z;
-
-    let mut inserted = 0.0;
     for (ii, i) in (i_lo..i_hi).enumerate() {
-        let di_sq = ((i - grid.mid_xy) as f64).powi(2);
         let gi = gauss_i[ii];
         let iu = i as usize;
-        for (jj, j) in (j_lo..j_hi).enumerate() {
-            let ion_density = gaussian_factor * gi * gauss_j[jj];
-            let ju = j as usize;
-            for k in k_lo..k_hi {
-                let idx = grid.idx(iu, ju, k);
-                positive[idx] += ion_density;
-                negative[idx] += ion_density;
+        let row_lo = iu * grid.no_xy + j_lo as usize;
+        let row_hi = iu * grid.no_xy + j_hi as usize;
+        for (cell, &gj) in total_density[row_lo..row_hi].iter_mut().zip(gauss_j.iter()) {
+            *cell += gaussian_factor * gi * gj;
+        }
+    }
+}
+
+/// Phase 2 of batched deposition: broadcast the step's accumulated 2D
+/// density down every gap layer of both carrier arrays, and score the charge
+/// that landed inside the scored disc. `O(no_xy^2 * no_z)` regardless of how
+/// many tracks contributed this step -- the caller skips calling this at all
+/// when no tracks arrived, so a clearance-phase step (no deposition) costs
+/// nothing here, same as the unbatched version.
+fn broadcast_and_score(
+    grid: &Grid,
+    total_density: &[f64],
+    positive: &mut [f64],
+    negative: &mut [f64],
+) -> f64 {
+    let mut inserted = 0.0;
+    let k_lo = grid.no_z_electrode;
+    let k_hi = grid.no_z_electrode + grid.no_z;
+    for i in 0..grid.no_xy {
+        let di_sq = ((i as i64 - grid.mid_xy) as f64).powi(2);
+        let row_base = i * grid.no_xy;
+        for j in 0..grid.no_xy {
+            let density = total_density[row_base + j];
+            if density == 0.0 {
+                continue; // most columns are untouched at low-to-moderate dose rates
             }
-            let dj_sq = ((j - grid.mid_xy) as f64).powi(2);
+            let base = (row_base + j) * grid.no_z_with_buffer;
+            let p_slice = &mut positive[base + k_lo..base + k_hi];
+            let n_slice = &mut negative[base + k_lo..base + k_hi];
+            for (p, n) in p_slice.iter_mut().zip(n_slice.iter_mut()) {
+                *p += density;
+                *n += density;
+            }
+            let dj_sq = ((j as i64 - grid.mid_xy) as f64).powi(2);
             if di_sq + dj_sq < grid.scoring_radius_sq {
-                inserted += ion_density * grid.no_z as f64;
+                inserted += density * grid.no_z as f64;
             }
         }
     }
@@ -212,6 +249,12 @@ pub struct Simulation {
     negative_next: Vec<f64>,
     rng: Pcg64,
     schedule: Vec<i64>,
+    // Reusable per-track scratch space -- see accumulate_track_2d's doc comment.
+    gauss_i_scratch: Vec<f64>,
+    gauss_j_scratch: Vec<f64>,
+    // The step's batched 2D density, before broadcast_and_score spreads it
+    // down z -- see the module docs on why this crate batches deposition.
+    total_density_scratch: Vec<f64>,
     step_index: i64,
     no_initialised: f64,
     no_recombined: f64,
@@ -242,6 +285,11 @@ impl Simulation {
             config.dt,
             config.pulse_time_steps,
         );
+        // Generous enough for the widest stencil this config can produce
+        // (track_cutoff_voxels doesn't change once built) -- sized once so
+        // insert_track's clear()+extend() never needs to grow the backing
+        // allocation.
+        let scratch_capacity = config.track_cutoff_voxels.ceil() as usize * 2 + 4;
 
         Simulation {
             grid,
@@ -251,6 +299,9 @@ impl Simulation {
             negative_next: vec![0.0; size],
             rng,
             schedule,
+            gauss_i_scratch: Vec::with_capacity(scratch_capacity),
+            gauss_j_scratch: Vec::with_capacity(scratch_capacity),
+            total_density_scratch: vec![0.0; no_xy * no_xy],
             step_index: 0,
             no_initialised: 0.0,
             no_recombined: 0.0,
@@ -278,28 +329,44 @@ impl Simulation {
         let h2 = self.config.unit_length_cm * self.config.unit_length_cm;
         let b2 = self.config.track_radius_cm * self.config.track_radius_cm;
 
-        let mut injected = 0.0;
-        for _ in 0..n_tracks_this_step {
-            let (x, y) = sample_xy_inside_cylinder(
-                &mut self.rng,
-                self.config.mid_xy,
-                // Tracks are drawn inside sampling_radius (== inner_radius at
-                // the fixed chamber_fill_fraction=1.0 this crate uses).
-                self.config.inner_radius_sq,
-                self.config.no_xy,
-            );
-            injected += insert_track(
+        // Batched: accumulate every track this step into the 2D scratch
+        // first, then broadcast+score once -- skipped entirely (both the
+        // clear and the O(no_xy^2 * no_z) broadcast) when nothing arrives,
+        // which is most steps during the clearance phase.
+        let injected = if n_tracks_this_step > 0 {
+            self.total_density_scratch.iter_mut().for_each(|v| *v = 0.0);
+            for _ in 0..n_tracks_this_step {
+                let (x, y) = sample_xy_inside_cylinder(
+                    &mut self.rng,
+                    self.config.mid_xy,
+                    // Tracks are drawn inside sampling_radius (==
+                    // inner_radius at the fixed chamber_fill_fraction=1.0
+                    // this crate uses).
+                    self.config.inner_radius_sq,
+                    self.config.no_xy,
+                );
+                accumulate_track_2d(
+                    &self.grid,
+                    &mut self.total_density_scratch,
+                    x,
+                    y,
+                    h2,
+                    b2,
+                    self.config.gaussian_factor,
+                    self.config.track_cutoff_voxels,
+                    &mut self.gauss_i_scratch,
+                    &mut self.gauss_j_scratch,
+                );
+            }
+            broadcast_and_score(
                 &self.grid,
+                &self.total_density_scratch,
                 &mut self.positive,
                 &mut self.negative,
-                x,
-                y,
-                h2,
-                b2,
-                self.config.gaussian_factor,
-                self.config.track_cutoff_voxels,
-            );
-        }
+            )
+        } else {
+            0.0
+        };
         self.no_initialised += injected;
 
         let (recombined, total_p, total_n) = lax_wendroff_step(
@@ -370,6 +437,7 @@ mod tests {
             dose_rate_gy_s: 1e-8,
             pulse_duration_s: 1e-6,
             sampled_radius_cm: 0.01,
+            grid_size_um: 10.0,
             seed,
         }
     }
@@ -422,16 +490,23 @@ mod tests {
             dose_rate_gy_s: 8.91,
             pulse_duration_s: 540e-6,
             sampled_radius_cm: 0.003,
+            grid_size_um: 10.0,
             seed: 1,
         };
         let config = Config::build(params).unwrap();
         let mut sim = Simulation::new(config);
         sim.run_to_completion();
+        // Deterministic (seed=1): 1.0586388... measured with the unbatched
+        // deposition this crate started with, and unchanged after switching
+        // to batched deposition -- batching sums each step's tracks before
+        // broadcasting rather than depositing them individually, and
+        // addition is associative, so this is a genuine invariance, not a
+        // coincidence (see the module docs on why batching was added, and
+        // accumulate_track_2d's on why summing first is exact).
         assert!(
-            sim.ks() > 1.0,
-            "expected some recombination, got ks={}",
+            (sim.ks() - 1.058639).abs() < 1e-5,
+            "ks={} (expected 1.058639, seed=1 deterministic)",
             sim.ks()
         );
-        assert!(sim.ks() < 2.0, "ks={} looks unphysically large", sim.ks());
     }
 }
