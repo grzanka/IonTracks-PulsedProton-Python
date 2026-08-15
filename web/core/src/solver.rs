@@ -370,6 +370,7 @@ mod tests {
             dose_rate_gy_s: 1e-8,
             pulse_duration_s: 1e-6,
             sampled_radius_cm: 0.01,
+            grid_size_um: 10.0,
             seed,
         }
     }
@@ -422,6 +423,7 @@ mod tests {
             dose_rate_gy_s: 8.91,
             pulse_duration_s: 540e-6,
             sampled_radius_cm: 0.003,
+            grid_size_um: 10.0,
             seed: 1,
         };
         let config = Config::build(params).unwrap();

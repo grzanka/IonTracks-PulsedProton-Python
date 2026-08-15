@@ -15,15 +15,17 @@ This is a deliberately scoped-down port, not a 1:1 translation -- see
   two-Kanai-species option (`docs/PHYSICS.md` sec. 8) isn't ported.
 - `lateral_boundary` is always `"reflecting"`, `scoring_region` always
   `"track_disc"`, `n_pulses` always `1`, `particle` always `"proton"`.
-- `grid_size_um`, `buffer_radius`, `no_z_electrode`, `track_cutoff_sigmas`,
+- `buffer_radius`, `no_z_electrode`, `track_cutoff_sigmas`,
   `repetition_rate_hz` and `n_clearance_separation_times` are fixed
   constants -- cost-model levers, not physics intuition (see
-  `docs/PERFORMANCE.md` in the repo root), hidden so the exposed sliders
-  can't accidentally leave the browser's time/RAM budget.
-- Two hard, independent safety ceilings (`config::MAX_*`) bound worst-case
-  memory and wall time regardless of what the UI's own slider ranges allow --
-  defense in depth, matching `SimulationConfig`'s own "refuse rather than
-  OOM twenty minutes in" philosophy.
+  `docs/PERFORMANCE.md` in the repo root), hidden so the UI's inputs can't
+  accidentally leave the browser's time/RAM budget through those knobs.
+  `grid_size_um` _is_ exposed (default 10 µm, matching the library default).
+- Four hard, independent safety ceilings (`config::MAX_*`) bound worst-case
+  voxel count, memory, track count and step count, regardless of which input
+  parameter -- a wide radius, a fine `grid_size_um`, or some combination --
+  drove a config there. Defense in depth, matching `SimulationConfig`'s own
+  "refuse rather than OOM twenty minutes in" philosophy.
 - The track-density cross-section (a full 2D field) isn't scored -- only the
   four scalar time series (`n+`, `n-`, `injected`, `recombination`) the
   browser's live plots need.

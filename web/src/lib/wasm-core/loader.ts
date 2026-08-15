@@ -29,6 +29,7 @@ export interface SimParams {
   doseRateGyS: number;
   pulseDurationS: number;
   sampledRadiusCm: number;
+  gridSizeUm: number;
 }
 
 export interface Estimate {
@@ -53,6 +54,7 @@ export function estimate(params: SimParams): Estimate {
     params.doseRateGyS,
     params.pulseDurationS,
     params.sampledRadiusCm,
+    params.gridSizeUm,
   );
   return {
     ok: e.ok,

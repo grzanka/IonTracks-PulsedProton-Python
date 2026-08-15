@@ -41,6 +41,7 @@ async function run(request: MainToWorkerMessage & { type: "start" }): Promise<vo
     params.doseRateGyS,
     params.pulseDurationS,
     params.sampledRadiusCm,
+    params.gridSizeUm,
     seed,
   );
   if (!sim.ok()) {

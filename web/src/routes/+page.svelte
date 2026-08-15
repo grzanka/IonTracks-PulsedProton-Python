@@ -10,6 +10,7 @@
     DOSE_RATE_UNITS,
     ENERGY_UNITS,
     GAP_LENGTH_UNITS,
+    GRID_SIZE_UNITS,
     MARKUS_FULL_RADIUS_CM,
     PULSE_TIME_UNITS,
     RADIUS_LENGTH_UNITS,
@@ -27,7 +28,7 @@
   let doseRateGyS = $state(8.91);
   let pulseDurationS = $state(540e-6);
   let sampledRadiusCm = $state(0.008);
-  let seed = $state(1);
+  let gridSizeUm = $state(10);
 
   let phase = $state<Phase>("setup");
   let errorMessage = $state("");
@@ -51,6 +52,7 @@
       doseRateGyS,
       pulseDurationS,
       sampledRadiusCm,
+      gridSizeUm,
     };
   }
 
@@ -66,6 +68,7 @@
     void doseRateGyS;
     void pulseDurationS;
     void sampledRadiusCm;
+    void gridSizeUm;
     return estimate(currentParams());
   });
 
@@ -91,6 +94,10 @@
     nNegative = [];
     recombined = [];
 
+    // A fresh, unexposed seed per run: statistical noise between runs of the
+    // same config is real physics (docs/PHYSICS.md sec. 14), not something
+    // to hide behind a fixed default -- see repeated-run behaviour there.
+    const seed = Math.floor(Math.random() * 1_000_000_000);
     controller.start(currentParams(), seed, {
       onInvalid: (error) => {
         phase = "error";
@@ -128,10 +135,6 @@
     phase = "setup";
   }
 
-  function reroll(): void {
-    seed = Math.floor(Math.random() * 1_000_000_000);
-  }
-
   let carrierScale = $derived(siScale([...nPositive, ...nNegative]));
   let recombinedScale = $derived(siScale(recombined));
   let progressPct = $derived(totalSteps > 0 ? Math.min(100, (100 * stepIndex) / totalSteps) : 0);
@@ -145,19 +148,16 @@
   <header>
     <h1>Pulsed-proton ion-chamber recombination</h1>
     <p class="subtitle">
-      Runs entirely in your browser (Rust compiled to WebAssembly, no server involved) -- a
-      browser-scale port of
+      Solves the coupled drift-diffusion-recombination equations for a small column of
+      ionisation-chamber gas under a pulsed proton beam, and reports the general recombination
+      correction factor k<sub>s</sub> -- entirely client-side (Rust compiled to WebAssembly; nothing
+      is sent to a server). A single averaged ion-pair species and a small sampled sub-volume of the
+      chamber keep it fast enough to run live in a browser tab; see
       <a
         href="https://github.com/grzanka/IonTracks-PulsedProton-Python"
         target="_blank"
         rel="noreferrer">pulsed_ion_chamber</a
-      >. See
-      <a
-        href="https://github.com/grzanka/IonTracks-PulsedProton-Python/issues/6"
-        target="_blank"
-        rel="noreferrer">issue #6</a
-      >
-      for what this prototype narrows relative to the full Python package.
+      > for the full two-species model and the physics behind every simplification here.
     </p>
   </header>
 
@@ -210,17 +210,15 @@
           units={RADIUS_LENGTH_UNITS}
           defaultUnitSymbol="mm"
           bind:value={sampledRadiusCm}
-          min={0.003}
-          max={0.025}
           hint={`≈ ${radiusPercentOfMarkus.toFixed(1)}% of the full Markus PTW 23343 chamber radius (2.65 mm)`}
         />
-      </div>
-      <div class="seed-row">
-        <label class="seed-label">
-          Seed
-          <input type="number" bind:value={seed} />
-        </label>
-        <button type="button" onclick={reroll}>Reroll</button>
+        <UnitField
+          label="Grid spacing"
+          units={GRID_SIZE_UNITS}
+          defaultUnitSymbol="µm"
+          bind:value={gridSizeUm}
+          hint="10 µm is the validated default (resolves the ~20 µm track core); finer is much more expensive -- see the estimate below."
+        />
       </div>
 
       <h2>2. Estimated cost</h2>
@@ -326,6 +324,16 @@
       </div>
     </section>
   {/if}
+
+  <footer>
+    <a
+      href="https://github.com/grzanka/IonTracks-PulsedProton-Python"
+      target="_blank"
+      rel="noreferrer"
+    >
+      github.com/grzanka/IonTracks-PulsedProton-Python
+    </a>
+  </footer>
 </main>
 
 <style>
@@ -371,25 +379,6 @@
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 1rem 1.5rem;
     margin-bottom: 1rem;
-  }
-
-  label {
-    display: flex;
-    flex-direction: column;
-    font-size: 0.85rem;
-    color: #334155;
-    gap: 0.25rem;
-  }
-
-  .seed-row {
-    display: flex;
-    align-items: flex-end;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-  }
-
-  .seed-label input {
-    width: 8rem;
   }
 
   .estimate {
@@ -471,5 +460,16 @@
     flex-direction: column;
     gap: 1.5rem;
     margin-top: 1rem;
+  }
+
+  footer {
+    margin-top: 2.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid #e2e8f0;
+    font-size: 0.8rem;
+  }
+
+  footer a {
+    color: #64748b;
   }
 </style>

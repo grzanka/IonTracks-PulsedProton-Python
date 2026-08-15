@@ -109,26 +109,30 @@
       aria-label={label}
       aria-invalid={!!error}
     />
-    <div
-      class="unit-group"
-      role="radiogroup"
-      tabindex="-1"
-      aria-label={`Unit for ${label}`}
-      onkeydown={handleGroupKeydown}
-    >
-      {#each units as unit (unit.symbol)}
-        <button
-          type="button"
-          role="radio"
-          aria-checked={unit.symbol === selected.symbol}
-          tabindex={unit.symbol === selected.symbol ? 0 : -1}
-          class:selected={unit.symbol === selected.symbol}
-          onclick={() => selectUnit(unit)}
-        >
-          {unit.symbol}
-        </button>
-      {/each}
-    </div>
+    {#if units.length > 1}
+      <div
+        class="unit-group"
+        role="radiogroup"
+        tabindex="-1"
+        aria-label={`Unit for ${label}`}
+        onkeydown={handleGroupKeydown}
+      >
+        {#each units as unit (unit.symbol)}
+          <button
+            type="button"
+            role="radio"
+            aria-checked={unit.symbol === selected.symbol}
+            tabindex={unit.symbol === selected.symbol ? 0 : -1}
+            class:selected={unit.symbol === selected.symbol}
+            onclick={() => selectUnit(unit)}
+          >
+            {unit.symbol}
+          </button>
+        {/each}
+      </div>
+    {:else}
+      <span class="unit-fixed">{selected.symbol}</span>
+    {/if}
   </div>
   {#if error}
     <span class="field-error">{error}</span>
@@ -198,6 +202,12 @@
     border-color: #2563eb;
     color: #1d4ed8;
     font-weight: 600;
+  }
+
+  .unit-fixed {
+    font-size: 0.8rem;
+    color: #64748b;
+    padding: 0.3rem 0.4rem;
   }
 
   .field-error {

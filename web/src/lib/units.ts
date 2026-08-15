@@ -96,6 +96,11 @@ export const RADIUS_LENGTH_UNITS: UnitDef[] = [
   { symbol: "cm", toBase: 1 },
 ];
 
+export const GRID_SIZE_UNITS: UnitDef[] = [
+  // base: um (the wasm core's grid_size_um is already in um, no conversion)
+  { symbol: "µm", toBase: 1 },
+];
+
 export const DOSE_RATE_UNITS: UnitDef[] = [
   // base: Gy/s
   { symbol: "Gy/s", toBase: 1 },

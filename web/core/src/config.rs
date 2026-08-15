@@ -11,8 +11,10 @@ use std::f64::consts::PI;
 
 // --- fixed knobs (docs/PERFORMANCE.md's cost-model levers, not physics
 // intuition -- see issue #6 sec. 6 for why these are hidden rather than
-// exposed in v1) ---
-pub const GRID_SIZE_UM: f64 = 10.0;
+// exposed in v1). grid_size_um used to live here too but is now a `Params`
+// field -- the hard ceilings below are expressed in derived quantities
+// (voxels, bytes, tracks, steps), so they don't care which input parameter
+// drove a config there, and stay the real safety backstop regardless. ---
 pub const BUFFER_RADIUS: i64 = 3;
 pub const NO_Z_ELECTRODE: i64 = 3;
 pub const TRACK_CUTOFF_SIGMAS: f64 = 10.0;
@@ -27,8 +29,8 @@ pub const MAX_TRACKS_PER_PULSE: i64 = 2_000_000;
 pub const MAX_TOTAL_TIME_STEPS: i64 = 200_000;
 
 /// The knobs this prototype exposes to the user. Everything else
-/// (`particle`, grid spacing, boundary condition, single- vs. two-species,
-/// ...) is fixed -- see module docs.
+/// (`particle`, boundary condition, single- vs. two-species, ...) is fixed --
+/// see module docs.
 #[derive(Clone, Copy, Debug)]
 pub struct Params {
     pub e_mev_u: f64,
@@ -37,6 +39,7 @@ pub struct Params {
     pub dose_rate_gy_s: f64,
     pub pulse_duration_s: f64,
     pub sampled_radius_cm: f64,
+    pub grid_size_um: f64,
     pub seed: u64,
 }
 
@@ -129,11 +132,12 @@ impl Config {
             || params.dose_rate_gy_s < 0.0
             || params.pulse_duration_s <= 0.0
             || params.sampled_radius_cm <= 0.0
+            || params.grid_size_um <= 0.0
         {
             return Err(ConfigError("All physical inputs must be positive.".into()));
         }
 
-        let unit_length_cm = GRID_SIZE_UM * 1e-4;
+        let unit_length_cm = params.grid_size_um * 1e-4;
         let let_kev_um_ = let_kev_um(params.e_mev_u);
         let track_radius_cm_ = track_radius_cm(let_kev_um_);
         let efield_v_cm = params.voltage_v / params.electrode_gap_cm;
@@ -145,13 +149,15 @@ impl Config {
         let no_z_with_buffer = 2 * NO_Z_ELECTRODE + no_z;
         if no_z <= 0 {
             return Err(ConfigError(
-                "electrode_gap_cm is too small for the fixed 10 um grid spacing.".into(),
+                "electrode_gap_cm is too small for this grid_size_um -- the gap must span at \
+                 least one voxel."
+                    .into(),
             ));
         }
         if no_xy * no_xy * no_z > MAX_TOTAL_VOXELS {
             return Err(ConfigError(format!(
                 "Grid too large for this browser prototype: {no_xy}x{no_xy}x{no_z} \
-                 ({} voxels, cap {MAX_TOTAL_VOXELS}). Reduce the radius.",
+                 ({} voxels, cap {MAX_TOTAL_VOXELS}). Reduce the radius, or coarsen grid_size_um.",
                 no_xy * no_xy * no_z
             )));
         }
@@ -160,7 +166,9 @@ impl Config {
         let inner_radius = outer_radius - BUFFER_RADIUS as f64;
         if inner_radius <= 0.0 {
             return Err(ConfigError(
-                "sampled_radius_cm is too small relative to the fixed buffer.".into(),
+                "sampled_radius_cm is too small relative to the fixed buffer at this \
+                 grid_size_um -- increase the radius, or coarsen grid_size_um."
+                    .into(),
             ));
         }
         let inner_radius_sq = inner_radius * inner_radius;
@@ -275,6 +283,7 @@ mod tests {
             dose_rate_gy_s: 8.91,
             pulse_duration_s: 540e-6,
             sampled_radius_cm,
+            grid_size_um: 10.0,
             seed: 1,
         }
     }
@@ -304,6 +313,37 @@ mod tests {
             relative_diff.abs() < 0.03,
             "got {}",
             config.number_of_tracks_per_pulse
+        );
+    }
+
+    #[test]
+    fn grid_size_um_changes_grid_width_as_expected() {
+        // no_xy = round(2*radius/grid_size_um) + 2*BUFFER_RADIUS. The buffer
+        // term (6 voxels at BUFFER_RADIUS=3) is a *constant* added on top of
+        // the disc's diameter, so doubling the radius does not double no_xy:
+        // 30um -> 6+6=12, 60um -> 12+6=18 (1.5x, not 2x), even though the
+        // disc term itself (6 -> 12) doubles exactly.
+        let mut params = aic144_like(0.003); // 30 um
+        let at_30um = Config::build(params).unwrap();
+        assert_eq!(at_30um.no_xy, 12);
+
+        params.sampled_radius_cm = 0.006; // 60 um
+        let at_60um = Config::build(params).unwrap();
+        assert_eq!(at_60um.no_xy, 18);
+    }
+
+    #[test]
+    fn coarser_grid_size_um_shrinks_the_grid() {
+        let mut params = aic144_like(0.008); // "archive" tier radius
+        params.grid_size_um = 10.0;
+        let fine = Config::build(params).unwrap();
+        params.grid_size_um = 20.0;
+        let coarse = Config::build(params).unwrap();
+        assert!(
+            coarse.no_xy < fine.no_xy,
+            "coarse={}, fine={}",
+            coarse.no_xy,
+            fine.no_xy
         );
     }
 
