@@ -289,15 +289,20 @@ For parameter studies, run independent single-threaded processes — but expect
 well under linear aggregate throughput, for the same bandwidth and power reasons
 as above.
 
-## 7. Sizing a run before starting it: `--dry-run`
+## 7. Sizing a run before starting it: `--dry-run` and `--estimate-runtime-seconds`
 
 The `full_electrode` grid is 2 GiB on this laptop (§3); on a machine with less
 RAM to spare, or a grid pushed wider than this one, finding that out from the
 OOM killer partway through a 6–12 minute run is worse than finding out before
-it starts. `run_markus_2mm.py --dry-run` builds the config (so the
-constructor's own memory guard has already run — see
+it starts. Two flags on `run_markus_2mm.py` size a run without running all of
+it, for the two different questions "how much RAM?" and "how long?" — kept as
+two flags, not one, because a trustworthy answer to each costs something
+different.
+
+**`--dry-run`: memory only, instant, no allocation.** Builds the config (so
+the constructor's own memory guard has already run — see
 [`resources.py`](../pulsed_ion_chamber/resources.py)) and prints the sizing
-without running the simulation:
+without touching the solver at all:
 
 ```
 $ python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 2 --dry-run
@@ -309,30 +314,56 @@ Currently available RAM   : 19.75 GiB
 Budget (80% of available)    : 15.80 GiB
 Fits within budget        : yes
 
---- dry run: rough runtime estimate (unbatched, single-track kernels; JIT excluded) ---
-...
-estimated wall time       : 74441 s (21 h)
-
-CAUTION: that estimate times the unbatched per-track kernel (_insert_track_numba),
-not the batched backend --threads=2 would actually use here. ...
-
 No simulation was run (--dry-run).
 ```
 
-The memory half is the number to trust directly — it is exactly
+This number is trustworthy directly — it is exactly
 `config.estimated_memory_bytes`, the figure §3 checked against measured peak
-RSS (12–18 % low, comfortably inside the default 80 % budget). The runtime
-half is a genuine caveat, not a formatting nit: `estimate_full_runtime`
-(PERFORMANCE.md §7) times the unbatched, one-track-at-a-time kernel
-regardless of `--threads`, and on a grid this size that kernel is
-**~500–1000× slower** than the batched backend a real `--threads 2` run uses
-— compare the 21 h it prints above against the 382 s (§3/§4) the run actually
-takes. `--dry-run` prints an explicit `CAUTION` whenever `--threads > 1` would
-select the batched backend, so the number cannot be mistaken for a wall-time
-prediction; treat it only as a diagnostic of whether a scenario is
-deposition-bound or PDE-bound (PERFORMANCE.md §1).
-
+RSS (12–18 % low, comfortably inside the default 80 % budget).
 `pulsed_ion_chamber.resources.memory_report()` is the reusable half of this —
 it takes any `(required_bytes, budget_fraction)` pair and returns the same
-required-vs-available comparison `--dry-run` prints, so the same check can be
-dropped into another script without re-deriving it.
+required-vs-available comparison, so the same check can be dropped into
+another script without re-deriving it.
+
+**Runtime deliberately is not part of `--dry-run`.** An earlier version of
+this flag also printed a runtime estimate built from timing the unbatched,
+one-track-at-a-time kernel in isolation — which, on a grid this size, is
+**~500–1000× slower** than the batched backend a real `--threads 2` run
+actually uses (21 h estimated against a 382 s actual run). That number was
+never trustworthy enough to belong next to an instant, no-allocation flag,
+so it was removed rather than kept behind a caveat.
+
+**`--estimate-runtime-seconds N`: real backend, real grid, ~N seconds.**
+Allocates the full grid, warms up Numba, and runs the *actual* backend
+`--threads` would select — for real, just only for `N` seconds (default 5)
+instead of to completion — then extrapolates linearly from the measured
+per-step cost:
+
+```
+$ python examples/ifj_aic144/run_markus_2mm.py full_electrode --threads 2 --estimate-runtime-seconds 5
+...
+--- empirical runtime estimate: real solver_numba_parallel backend, 2 thread(s), ~5s sample ---
+steps measured            : 31 / 2,194
+measured time for those   : 5.03 s (162.2 ms/step)
+estimated total wall time : 356 s (0.099 h)
+
+No full run was performed (--estimate-runtime-seconds).
+```
+
+Measured against the actual 382 s full run (§3, same config): **356 s, a 7 %
+under-estimate** — two orders of magnitude closer than the isolated-kernel
+estimate above, because it exercises the batched deposition and the real
+thread count instead of a proxy for either. The 7 % gap has a specific cause
+worth knowing about on *this* class of machine: the 5 s sample is drawn from
+the first 31 steps, when the package is at its coolest; §4 already shows this
+laptop's sustained clock dropping from ~4790 MHz to ~4175 MHz as a
+full-electrode run heats it up, so an early sample runs faster than the run's
+own steady-state average. A cluster node that does not throttle (HELIOS.md)
+would not have this particular bias. Treat the result as same-order-of-magnitude,
+not a bound in either direction — see
+`pulsed_ion_chamber.benchmark.estimate_full_runtime_empirical` for the other
+contributor (missing the cheaper, deposition-free clearance-phase steps,
+which pulls the other way) and PERFORMANCE.md §7.
+
+`--dry-run` and `--estimate-runtime-seconds` are mutually exclusive: the
+former promises not to touch the solver, the latter always does.
