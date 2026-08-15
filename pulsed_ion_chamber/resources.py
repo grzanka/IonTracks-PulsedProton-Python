@@ -29,6 +29,7 @@ __all__ = [
     "check_memory_budget",
     "clamp_thread_count",
     "format_bytes",
+    "memory_report",
     "total_memory_bytes",
 ]
 
@@ -126,6 +127,52 @@ def check_memory_budget(
         " killer, not a slow run."
     )
     raise MemoryError(message)
+
+
+def memory_report(
+    required_bytes: float,
+    budget_fraction: Optional[float] = 0.8,
+) -> str:
+    """Human-readable "would this fit?" comparison, for sizing a run before
+    starting it (a memory dry run).
+
+    Uses the same numbers and the same arithmetic as `check_memory_budget`, so
+    a `--dry-run` flag built on this and the guard that actually runs at
+    `SimulationConfig` construction time can never disagree. `required_bytes`
+    is normally `config.estimated_memory_bytes`; `budget_fraction` is
+    normally `config.memory_budget_fraction`.
+
+    Peak RSS during a real run tends to land a little above
+    `required_bytes` -- 12 % on the full-electrode grid (docs/BENCHMARKS-LAPTOP.md
+    sec. 3) -- because this only counts the carrier arrays, the arrival-time
+    draw and the 2D scratch, not the interpreter, Numba's runtime or NumPy's
+    transient temporaries. The default `budget_fraction=0.8` leaves headroom
+    for that margin as well as for everything else running on the machine.
+    """
+    total = total_memory_bytes()
+    available = available_memory_bytes()
+
+    lines = [f"Estimated peak allocation : {format_bytes(required_bytes)}"]
+    lines.append(f"Total RAM on this machine : {format_bytes(total) if total is not None else 'unknown'}")
+
+    if available is None:
+        lines.append("Currently available RAM   : unknown on this platform -- budget check skipped")
+        return "\n".join(lines)
+
+    lines.append(f"Currently available RAM   : {format_bytes(available)}")
+
+    if budget_fraction is None:
+        lines.append("Budget check              : disabled (memory_budget_fraction=None)")
+        return "\n".join(lines)
+
+    budget = available * budget_fraction
+    fits = required_bytes <= budget
+    lines.append(f"Budget ({budget_fraction:.0%} of available)    : {format_bytes(budget)}")
+    lines.append(
+        "Fits within budget        : "
+        + ("yes" if fits else "NO -- this run would raise MemoryError before starting")
+    )
+    return "\n".join(lines)
 
 
 def clamp_thread_count(requested: int) -> int:

@@ -295,3 +295,37 @@ def test_resource_probes_are_self_consistent():
     # known, available cannot exceed total.
     if available is not None and total is not None:
         assert 0 < available <= total
+
+
+def test_memory_report_agrees_with_check_memory_budget():
+    """memory_report is the human-readable half of the same check
+    check_memory_budget enforces -- they must never disagree about whether a
+    given allocation fits."""
+    from pulsed_ion_chamber.resources import (
+        available_memory_bytes,
+        check_memory_budget,
+        memory_report,
+    )
+
+    if available_memory_bytes() is None:
+        pytest.skip("platform does not report available memory")
+
+    # Comfortably small: should fit.
+    report = memory_report(1024, budget_fraction=0.8)
+    assert "Fits within budget        : yes" in report
+    check_memory_budget(1024, budget_fraction=0.8)  # must not raise
+
+    # Absurdly large: should not fit, and the guard must agree.
+    huge = 1e30
+    report = memory_report(huge, budget_fraction=0.8)
+    assert "NO" in report
+    with pytest.raises(MemoryError):
+        check_memory_budget(huge, budget_fraction=0.8)
+
+
+def test_memory_report_handles_disabled_budget():
+    from pulsed_ion_chamber.resources import memory_report
+
+    report = memory_report(1e30, budget_fraction=None)
+    assert "disabled" in report
+    assert "NO" not in report

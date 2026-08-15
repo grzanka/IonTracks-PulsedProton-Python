@@ -11,6 +11,7 @@ docs/PERFORMANCE.md for timings and scaling.
 
 Run:  python examples/ifj_aic144/run_markus_2mm.py [tier] [--threads N]
             [--backend auto|serial|batched] [--dose-rate-water-Gy-s R] [--json FILE]
+            [--dry-run]
 
 The default is one thread and the unbatched backend, which is what the tier
 table below was measured with. `--threads N` switches to the batched backend
@@ -18,14 +19,23 @@ table below was measured with. `--threads N` switches to the batched backend
 affordable on a cluster -- roughly 10x on ~96 cores. There it needs its own
 srun step, and the thread count that pays is not the largest one available:
 see docs/HELIOS.md.
+
+`--dry-run` builds the config, prints its memory sizing (estimated peak
+allocation vs. what this machine actually has free) and a rough runtime
+estimate, then exits without running the simulation -- a way to catch "this
+grid is too big for this machine" before committing minutes or hours to it.
+See docs/BENCHMARKS-LAPTOP.md sec. 3 for how the estimate has tracked measured
+peak RSS on the full_electrode tier.
 """
 
 import argparse
 import json
 import os
 import platform
+import resource
 import time
 
+from pulsed_ion_chamber.benchmark import estimate_full_runtime
 from pulsed_ion_chamber.config import SimulationConfig
 from pulsed_ion_chamber.constants import (
     AIR_DENSITY_20C_KG_M3,
@@ -34,6 +44,7 @@ from pulsed_ion_chamber.constants import (
     ION_MOBILITY_NEGATIVE_CM2_VS,
     ION_MOBILITY_POSITIVE_CM2_VS,
 )
+from pulsed_ion_chamber.resources import format_bytes, memory_report
 from pulsed_ion_chamber.solver_numba import run_simulation_numba, warmup
 from pulsed_ion_chamber.solver_numba_parallel import run_simulation_numba_parallel, warmup_parallel
 
@@ -151,6 +162,7 @@ def main(
     backend: str = "auto",
     dose_rate_water_Gy_s: float = DEFAULT_DOSE_RATE_WATER_GY_S,
     sampled_radius_cm: float | None = None,
+    dry_run: bool = False,
 ) -> None:
     config = build_config(tier, dose_rate_water_Gy_s, sampled_radius_cm)
     # "auto": one thread keeps the unbatched backend, so a plain run reproduces
@@ -172,6 +184,35 @@ def main(
     print(f"Backend               : {backend}, {threads} thread(s)")
     print()
 
+    if dry_run:
+        # Sizing only: the memory guard in SimulationConfig.__post_init__ has
+        # already run (it would have raised MemoryError above if this config
+        # did not fit), so getting here at all means "yes, within budget" --
+        # this just makes the margin visible instead of silent.
+        print("--- dry run: memory ---")
+        print(memory_report(config.estimated_memory_bytes, config.memory_budget_fraction))
+        print()
+        print("--- dry run: rough runtime estimate (unbatched, single-track kernels; JIT excluded) ---")
+        est = estimate_full_runtime(config)
+        print(f"time per track deposit    : {est['t_per_track_s'] * 1e6:.2f} us")
+        print(f"time per PDE step         : {est['t_per_pde_step_s'] * 1e3:.2f} ms")
+        print(f"total tracks (all pulses) : {est['total_tracks']:,}")
+        print(f"total PDE steps           : {est['total_time_steps']:,}")
+        print(f"estimated wall time       : {est['estimated_seconds']:.0f} s ({est['estimated_hours']:.2g} h)")
+        if batched:
+            print(
+                "\nCAUTION: that estimate times the unbatched per-track kernel "
+                f"(_insert_track_numba), not the batched backend --threads={threads} would "
+                "actually use here. On a grid this size the batched backend deposits all of a "
+                "pulse's tracks as one blocked density draw instead of looping per track, which "
+                "makes it dramatically faster (minutes, not hours) -- see "
+                "docs/BENCHMARKS-LAPTOP.md sec. 3 and docs/HELIOS.md for measured batched wall "
+                "times on this tier. Treat the number above only as an upper bound / diagnostic "
+                "of the track-count-vs-PDE-step split, not as this run's expected wall time."
+            )
+        print("\nNo simulation was run (--dry-run).")
+        return
+
     if batched:
         warmup_parallel()
         t0 = time.perf_counter()
@@ -181,10 +222,20 @@ def main(
         t0 = time.perf_counter()
         result = run_simulation_numba(config, progress=True)
     elapsed_s = time.perf_counter() - t0
+    # ru_maxrss is already the process's peak so far, not an incremental
+    # figure -- see resource.getrusage(2) -- and by this point the carrier
+    # arrays and (for the unbatched backend) the arrival-time draw have both
+    # been through their peak, so this is the run's peak RSS.
+    peak_rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
     radius_um = config.sampled_radius_cm * 1e4
     corrected = result.ks + EDGE_DEFICIT_UM / radius_um
     print(f"\nWall time ({backend}, {threads} thread(s)): {elapsed_s:.1f} s")
+    # ru_maxrss is KiB on Linux, bytes on macOS -- this repo's benchmarking is
+    # Linux-only (bench_laptop.sh, submit.sh both require it), so KiB is what
+    # this number will be in practice; noted rather than special-cased.
+    print(f"Peak RSS                                : {format_bytes(peak_rss_kb * 1024)}")
+    print(f"  vs. estimated peak allocation         : {format_bytes(config.estimated_memory_bytes)}")
     print(f"Collection efficiency f = {result.f_t[-1]:.4f}")
     print(f"Recombination correction k_s = 1/f = {result.ks:.4f}")
     print(
@@ -216,6 +267,8 @@ def main(
                     "hostname": platform.node(),
                     "backend": backend,
                     "wall_s": elapsed_s,
+                    "peak_rss_kb": peak_rss_kb,
+                    "estimated_memory_bytes": config.estimated_memory_bytes,
                     "f": float(result.f_t[-1]),
                     "ks": float(result.ks),
                     "ks_corrected": float(corrected),
@@ -258,6 +311,11 @@ if __name__ == "__main__":
         choices=("auto", "serial", "batched"),
         help="auto (default) picks by thread count; force 'batched' for a single-core baseline",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the memory sizing and a rough runtime estimate, then exit without running",
+    )
     args = parser.parse_args()
     main(
         args.tier,
@@ -266,4 +324,5 @@ if __name__ == "__main__":
         args.backend,
         args.dose_rate_water_Gy_s,
         args.sampled_radius_cm,
+        args.dry_run,
     )
