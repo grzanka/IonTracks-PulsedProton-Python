@@ -69,6 +69,7 @@ Index: [`docs/README.md`](docs/README.md) — what each document answers.
 | [`profiling/README.md`](profiling/README.md) | Profiling harness and the raw data it produced. |
 | [`profiling/cluster_scaling/README.md`](profiling/cluster_scaling/README.md) | The cluster thread-scaling study (Helios, Ares) — `./submit.sh`. |
 | [`profiling/laptop_scaling/README.md`](profiling/laptop_scaling/README.md) | The laptop scaling benchmark — `./bench_laptop.sh`. |
+| [`web/README.md`](web/README.md) | Browser prototype: a capped sub-volume running live in WebAssembly, no server. See [issue #6](https://github.com/grzanka/IonTracks-PulsedProton-Python/issues/6). |
 
 Two results worth knowing before trusting a number:
 
