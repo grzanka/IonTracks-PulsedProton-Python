@@ -243,6 +243,18 @@ impl WasmSimulation {
             .unwrap_or(0.0)
     }
 
+    /// Number of leading steps that deposit tracks (`in-pulse`); every step
+    /// from here to `total_steps()` is clearance-only (sweep, no
+    /// deposition) and so measurably cheaper. Exposed so a caller timing a
+    /// short sample can weight the two phases separately instead of
+    /// extrapolating one phase's rate over the whole run (issue #19 W5).
+    pub fn pulse_time_steps(&self) -> f64 {
+        self.inner
+            .as_ref()
+            .map(|s| s.config.pulse_time_steps as f64)
+            .unwrap_or(0.0)
+    }
+
     pub fn step_index(&self) -> f64 {
         self.inner
             .as_ref()

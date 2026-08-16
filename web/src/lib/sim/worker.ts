@@ -72,6 +72,13 @@ async function run(request: MainToWorkerMessage & { type: "start" }): Promise<vo
       post({ type: "progress", chunk, stepIndex: sim.step_index(), totalSteps, ks: sim.ks() });
       chunk = emptyChunk();
       lastFlush = now;
+      // The loop above never awaits anything, so the worker never drains its
+      // message queue and the `{type:"cancel"}` message posted by
+      // controller.cancel() is never delivered -- the run goes to completion
+      // regardless of Cancel (issue #19 W1). A zero-delay macrotask yield,
+      // on the same cadence as the flush above (so it costs nothing extra),
+      // gives the event loop a chance to deliver it.
+      await new Promise((resolve) => setTimeout(resolve, 0));
     }
   }
 
@@ -116,26 +123,72 @@ async function estimateTime(
   }
 
   const totalSteps = sim.total_steps();
+  // In-pulse steps (1..pulseTimeSteps) also deposit tracks on top of the
+  // sweep; clearance steps (pulseTimeSteps+1..totalSteps) skip deposition
+  // entirely and are measurably cheaper. A single blended rate from a sample
+  // taken at the start of the run is therefore biased towards the more
+  // expensive in-pulse cost -- sampled separately below so each phase's
+  // remaining steps extrapolate from their own measured rate, not each
+  // other's (issue #19 W5).
+  const pulseTimeSteps = sim.pulse_time_steps();
   const start = performance.now();
   let stepsSampled = 0;
+  let pulseStepsSampled = 0;
+  let pulseElapsedMs = 0;
+  let clearanceStepsSampled = 0;
+  let clearanceElapsedMs = 0;
 
   while (!sim.is_finished()) {
     if (cancelRequested) {
       post({ type: "cancelled" });
       return;
     }
+    const stepStart = performance.now();
     sim.step();
+    const stepElapsedMs = performance.now() - stepStart;
     stepsSampled++;
+    if (sim.step_index() <= pulseTimeSteps) {
+      pulseStepsSampled++;
+      pulseElapsedMs += stepElapsedMs;
+    } else {
+      clearanceStepsSampled++;
+      clearanceElapsedMs += stepElapsedMs;
+    }
     if (performance.now() - start >= request.sampleMs) break;
+    // Same reasoning as run()'s loop: without a periodic yield, cancelEstimate()'s
+    // message is never delivered while this loop is still running (issue #19 W1).
+    if (stepsSampled % 64 === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
   }
 
   const sampleElapsedMs = performance.now() - start;
-  // If the whole run finished inside the sample window, that elapsed time
-  // *is* the answer -- no extrapolation needed (and dividing by stepsSampled
-  // would double-count the cheap clearance-phase steps at the end).
-  const estimatedTotalSeconds = sim.is_finished()
-    ? sampleElapsedMs / 1000
-    : (sampleElapsedMs / stepsSampled) * (totalSteps / 1000);
+  let estimatedTotalSeconds: number;
+  if (sim.is_finished()) {
+    // If the whole run finished inside the sample window, that elapsed time
+    // *is* the answer -- no extrapolation needed.
+    estimatedTotalSeconds = sampleElapsedMs / 1000;
+  } else {
+    const remainingPulseSteps = Math.max(0, pulseTimeSteps - pulseStepsSampled);
+    const remainingClearanceSteps = Math.max(
+      0,
+      totalSteps - pulseTimeSteps - clearanceStepsSampled,
+    );
+    // If a phase wasn't sampled at all (the whole budget stayed in the
+    // other one), fall back to that phase's rate for it -- never worse than
+    // the old single-rate extrapolation, and exact once the sample spans
+    // both phases (a 3 s default sample usually does: a few thousand steps
+    // easily covers a several-hundred-microsecond pulse).
+    const pulseRateMsPerStep =
+      pulseStepsSampled > 0
+        ? pulseElapsedMs / pulseStepsSampled
+        : clearanceElapsedMs / Math.max(1, clearanceStepsSampled);
+    const clearanceRateMsPerStep =
+      clearanceStepsSampled > 0 ? clearanceElapsedMs / clearanceStepsSampled : pulseRateMsPerStep;
+    const remainingMs =
+      remainingPulseSteps * pulseRateMsPerStep + remainingClearanceSteps * clearanceRateMsPerStep;
+    estimatedTotalSeconds = (sampleElapsedMs + remainingMs) / 1000;
+  }
   post({ type: "time_estimate", estimatedTotalSeconds, stepsSampled, totalSteps, sampleElapsedMs });
 }
 
