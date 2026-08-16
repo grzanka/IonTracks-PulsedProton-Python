@@ -43,12 +43,81 @@ def format_bytes(n: float) -> str:
     return f"{n:.2f} TiB"  # unreachable, keeps type checkers happy
 
 
-def total_memory_bytes() -> Optional[int]:
-    """Total physical RAM, or None if the platform does not report it."""
+def _cgroup_limit_bytes() -> Optional[int]:
+    """The cgroup memory ceiling this process actually runs under, or None.
+
+    ``/proc/meminfo`` describes the *machine*, not the container, and under a
+    batch scheduler those are wildly different numbers: a Slurm job on a Helios
+    GH200 node that asked for ``--mem=12G`` sees 858 GiB of node RAM in
+    ``MemAvailable`` and is killed at 12 GiB by the cgroup. Every guard in this
+    module is there to turn "OOM-killed twenty minutes in" into "MemoryError
+    before allocating", and on a scheduled node the cgroup limit is the number
+    that decides which of the two happens.
+
+    Reads cgroup v2 (``memory.max``, the unified hierarchy Slurm uses on
+    EL9) and falls back to v1 (``memory.limit_in_bytes``). Returns None when
+    there is no cgroup, no limit (``max``), or the limit is the "unlimited"
+    sentinel some v1 kernels report.
+    """
     try:
-        return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
-    except (ValueError, OSError, AttributeError):
+        with open("/proc/self/cgroup") as handle:
+            relative = None
+            for line in handle:
+                fields = line.rstrip("\n").split(":", 2)
+                # v2 lines are "0::/path"; v1 memory lines are "N:memory:/path".
+                if len(fields) == 3 and (fields[0] == "0" or "memory" in fields[1].split(",")):
+                    relative = fields[2].lstrip("/")
+                    break
+    except OSError:
         return None
+    if relative is None:
+        return None
+
+    candidates = [
+        os.path.join("/sys/fs/cgroup", relative, "memory.max"),
+        os.path.join("/sys/fs/cgroup/memory", relative, "memory.limit_in_bytes"),
+    ]
+    # Walk *up* the hierarchy too: Slurm sets the ceiling on the job scope and
+    # runs the task in a leaf below it, where memory.max is often "max".
+    limits = []
+    for path in candidates:
+        node = os.path.dirname(path)
+        name = os.path.basename(path)
+        while node.startswith("/sys/fs/cgroup"):
+            try:
+                with open(os.path.join(node, name)) as handle:
+                    raw = handle.read().strip()
+            except OSError:
+                raw = ""
+            if raw and raw != "max":
+                try:
+                    value = int(raw)
+                except ValueError:
+                    value = 0
+                # v1 reports ~2^63 for "no limit"; anything at or above the
+                # machine's RAM is not a real constraint either.
+                if 0 < value < 2**62:
+                    limits.append(value)
+            node = os.path.dirname(node)
+    return min(limits) if limits else None
+
+
+def total_memory_bytes() -> Optional[int]:
+    """Total RAM this process may use, or None if the platform does not report it.
+
+    The cgroup limit wins over the machine's physical RAM when it is smaller --
+    see :func:`_cgroup_limit_bytes`.
+    """
+    try:
+        physical = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+    except (ValueError, OSError, AttributeError):
+        physical = None
+    limit = _cgroup_limit_bytes()
+    if physical is None:
+        return limit
+    if limit is None:
+        return physical
+    return min(physical, limit)
 
 
 def available_memory_bytes() -> Optional[int]:
@@ -59,18 +128,53 @@ def available_memory_bytes() -> Optional[int]:
     badly understates it on any machine that has been up for a while. Falls
     back to ``SC_AVPHYS_PAGES``, which does not count reclaimable cache and so
     is conservative.
+
+    Clamped by whatever the cgroup still allows (limit minus current usage), so
+    that under Slurm this reports the job's headroom rather than the node's.
     """
+    node_available = None
     try:
         with open("/proc/meminfo") as meminfo:
             for line in meminfo:
                 if line.startswith("MemAvailable:"):
-                    return int(line.split()[1]) * 1024
+                    node_available = int(line.split()[1]) * 1024
+                    break
     except (OSError, ValueError, IndexError):
         pass
+    if node_available is None:
+        try:
+            node_available = os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+        except (ValueError, OSError, AttributeError):
+            node_available = None
+
+    limit = _cgroup_limit_bytes()
+    if limit is None:
+        return node_available
+    headroom = max(0, limit - _cgroup_usage_bytes())
+    return headroom if node_available is None else min(node_available, headroom)
+
+
+def _cgroup_usage_bytes() -> int:
+    """Bytes currently charged to this process's cgroup, 0 if unreadable."""
     try:
-        return os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
-    except (ValueError, OSError, AttributeError):
-        return None
+        with open("/proc/self/cgroup") as handle:
+            relative = None
+            for line in handle:
+                fields = line.rstrip("\n").split(":", 2)
+                if len(fields) == 3 and (fields[0] == "0" or "memory" in fields[1].split(",")):
+                    relative = fields[2].lstrip("/")
+                    break
+    except OSError:
+        return 0
+    if relative is None:
+        return 0
+    for name, root in (("memory.current", "/sys/fs/cgroup"), ("memory.usage_in_bytes", "/sys/fs/cgroup/memory")):
+        try:
+            with open(os.path.join(root, relative, name)) as handle:
+                return int(handle.read().strip())
+        except (OSError, ValueError):
+            continue
+    return 0
 
 
 def available_cores() -> int:
