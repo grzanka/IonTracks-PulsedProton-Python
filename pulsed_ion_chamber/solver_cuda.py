@@ -589,10 +589,12 @@ def _advise(cp, arrays, policy: str, device_budget_bytes: int) -> None:
 def _check_gpu_memory(config: SimulationConfig, cp, memory: str) -> None:
     """Refuse a grid that will not fit, before allocating it.
 
-    The host-side ``SimulationConfig`` memory guard checks system RAM, which on
-    a fat node is far larger than the GPU's, so device memory needs its own
-    check. In managed mode the ceiling is device memory *plus* what the host
-    still has -- and on a scheduled node "what the host has" is the job's cgroup
+    Each of the three allocators has its own ceiling: ``"device"`` is bounded by
+    the GPU alone, ``"host"`` by the host alone, ``"managed"`` by their sum.
+    The host-side ``SimulationConfig`` guard cannot stand in for any of them --
+    it checks system RAM, which on a fat node is far larger than the GPU's and
+    on a scheduled one is far *smaller* than it looks. "What the host has" is
+    the job's cgroup
     headroom, not the node's free RAM (``resources.available_memory_bytes``).
     Getting that wrong on Helios means the OOM killer at step 300 instead of a
     MemoryError before allocating.

@@ -102,12 +102,26 @@ submit() {  # submit <name> <time> <command...>
     --output="$REPO/logs/${name}-%j.out" --error="$REPO/logs/${name}-%j.err"
   )
   if [ "$DRY_RUN" = 1 ]; then
-    printf 'sbatch %s --wrap "%s"\n' "${args[*]}" "$*"
+    printf 'sbatch %s <<script>>\n    %s\n\n' "${args[*]}" "$*"
     return
   fi
-  sbatch "${args[@]}" --wrap "cd $REPO && \
-module load Python/3.11.5 && module load CUDA/12.9.1 && \
-source $VENV/bin/activate && $*"
+  # A here-doc script rather than --wrap, and `#!/bin/bash -l` rather than a
+  # plain shebang: `module` is a shell function that Lmod installs from
+  # /etc/profile.d, so a non-login job shell may not have it at all. --wrap
+  # happens to work when submitted from a shell that already has the function
+  # exported, which is exactly the kind of dependency that fails on the day
+  # someone submits from cron.
+  sbatch "${args[@]}" <<SCRIPT
+#!/bin/bash -l
+set -euo pipefail
+module load Python/3.11.5
+module load CUDA/12.9.1
+cd "$REPO"
+source "$VENV/bin/activate"
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+echo "host memory limit: \$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo unknown)"
+$*
+SCRIPT
 }
 
 # The headline: the full Markus electrode (sampled_radius_cm=0.265) at --grid-um.

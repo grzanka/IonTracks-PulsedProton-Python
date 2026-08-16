@@ -250,7 +250,7 @@ def main() -> None:
     print(f"host={platform.node()}  ladder={label}  max_steps={max_steps or 'all'}")
     print(
         f"{'grid':>20} {'Mvoxel':>8} {'arrays':>10} {'memory':>8} {'advise':>7} {'tpb':>5}"
-        f" {'steps':>6} {'ms/step':>9} {'Gvox/s':>8} {'GB/s':>7} {'f_end':>10}"
+        f" {'steps':>6} {'ms/step':>9} {'Gvox/s':>8} {'GB/s':>7} {'f_end':>10} {'k_s':>10}"
     )
 
     rows = []
@@ -298,6 +298,8 @@ def main() -> None:
             print(
                 line + f" {row['steps']:>6} {row['ms_per_step']:>9.2f}"
                 f" {row['gvox_per_s']:>8.2f} {row['gb_per_s']:>7.0f} {row['f_end']:>10.6f}"
+                # k_s is defined after full clearance, so a truncated row has none.
+                + (f" {row['ks']:>10.6f}" if row["ks"] == row["ks"] else f" {'--':>10}")
             )
         rows.append(row)
 
