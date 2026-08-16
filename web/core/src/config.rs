@@ -543,7 +543,12 @@ mod tests {
         // ("sampled_radius_cm is too small"). saturating_add fixes that.
         let mut params = aic144_like(0.008);
         params.sampled_radius_cm = 1e300;
-        params.grid_size_um = 1e-300; // underflows unit_length_cm to 0.0
+        // unit_length_cm = 1e-300 * 1e-4 = 1e-304 -- still representable (an
+        // f64 normal goes down to ~2.2e-308), so this isn't a division by
+        // zero. What overflows is the *ratio*: 2*radius/unit_length_cm is
+        // ~2e604, past f64::MAX, so it evaluates to +inf, and `.round() as
+        // i64` on infinity is what saturates to i64::MAX (PR #20 review).
+        params.grid_size_um = 1e-300;
         let err = Config::build(params).unwrap_err();
         assert!(err.0.contains("absurdly large"), "{}", err.0);
     }
