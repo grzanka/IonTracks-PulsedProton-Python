@@ -9,7 +9,7 @@ the GPU carrier-array footprint for each.
 The point it demonstrates is the crossover of docs/PERFORMANCE.md sec. 6: both
 hot loops are memory-bandwidth-bound, so the GPU only wins once the grid is too
 big to live in a CPU's cache, and the win then grows with size. The headline is
-the full Markus electrode at 5 um voxels -- 466 M voxels, 14.9 GiB of carrier
+the full Markus electrode at 5 um voxels -- 466 M voxels, 13.9 GiB of carrier
 arrays -- which does not fit in host cache at all but sits comfortably in the
 A100's 40 GiB of HBM.
 
@@ -33,8 +33,6 @@ import json
 import os
 import platform
 import time
-
-import numpy as np
 
 # The scenario's beam/chamber/gas kwargs live in the example; import them so the
 # physics benchmarked here is byte-for-byte the published case, not a copy that

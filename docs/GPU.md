@@ -9,7 +9,7 @@ for the CPU cost model [PERFORMANCE.md](PERFORMANCE.md).
 **The one-line answer:** the GPU wins once the grid is too large to live in a
 CPU's cache, and the win then grows with size. On one A100-40GB the full Markus
 electrode at 10 µm runs **15× faster than 32 CPU cores** (219 s → 14.5 s), and
-the 5 µm full electrode — 466 M voxels, 14.9 GiB of carrier arrays, which no CPU
+the 5 µm full electrode — 466 M voxels, 13.9 GiB of carrier arrays, which no CPU
 cache can hold — runs in **156 s** on the GPU against **50 min on 32 cores
 (19×)**. `k_s` is identical to the CPU reference to six digits in every case. A
 *small* grid is faster on one CPU core: below ~r = 0.05 cm the GPU loses to
@@ -131,7 +131,7 @@ CPU grows with the grid, so the ratio keeps climbing.
 ## 5. The full electrode at 5 µm — the memory-bound headline
 
 The reason to reach for a 40 GiB GPU: refine the full electrode to 5 µm voxels
-and it becomes a **1066² × 410 grid, 466 M voxels, 14.9 GiB** of carrier arrays
+and it becomes a **1066² × 410 grid, 466 M voxels, 13.9 GiB** of carrier arrays
 (four float64 grids), with the time step halved by the von Neumann limit so
 4580 steps instead of 2194. That does not fit in any CPU cache, and on a CPU it
 is `h⁻⁴`-expensive (PERFORMANCE.md §3); on the A100 it sits in HBM with room to
@@ -173,7 +173,7 @@ Three decisions make it fast:
 
 - **The arrays never leave the device.** They are allocated once in HBM; the
   only per-step host↔device traffic is three float64 scalars coming back (the
-  scored reduction), 24 bytes against the ~15 GiB the sweep touches. Copying a
+  scored reduction), 24 bytes against the ~14 GiB the sweep touches. Copying a
   carrier array back each step would make PCIe, not the GPU, the bottleneck.
 - **The reduction is fused into the sweep.** Each step needs three sums over the
   scored region; a second CuPy pass would re-read the whole grid and roughly

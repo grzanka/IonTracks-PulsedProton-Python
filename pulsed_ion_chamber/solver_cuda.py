@@ -16,7 +16,7 @@ server, so the sweep is exactly the kind of kernel a GPU is built for -- but
 the GPU, because there is not enough parallel work to hide the launch latency
 and the host<->device round trip. The crossover, measured on this A100, is
 around the ``standard``/``wide`` tier; the win grows without bound above it and
-the headline case is the 5 um full-electrode grid (15.5 GiB of carrier arrays,
+the headline case is the 5 um full-electrode grid (13.9 GiB of carrier arrays,
 which does not fit in host L3 at all but sits comfortably in 40 GiB of HBM).
 
 Three design decisions
@@ -26,7 +26,7 @@ Three design decisions
 carrier arrays (and the 2D deposition scratch) once, in GPU memory, and every
 kernel operates on them in place. The only per-step host<->device traffic is
 three float64 scalars coming back (the scored reduction) -- 24 bytes a step
-against the ~15 GiB the sweep touches on device. Copying a carrier array back
+against the ~14 GiB the sweep touches on device. Copying a carrier array back
 each step, as a naive port would, would make the PCIe bus, not the GPU, the
 bottleneck and lose the entire point.
 

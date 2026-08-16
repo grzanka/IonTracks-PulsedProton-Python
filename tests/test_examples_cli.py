@@ -6,13 +6,51 @@ docs/BENCHMARKS-LAPTOP.md promise, run as a subprocess the way a user
 actually invokes it.
 """
 
+import re
 import subprocess
 import sys
+import time
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUN_MARKUS_2MM = REPO_ROOT / "examples" / "ifj_aic144" / "run_markus_2mm.py"
 PLOT = REPO_ROOT / "examples" / "ifj_aic144" / "plot.py"
+
+KS_RE = re.compile(r"Recombination correction k_s = 1/f = ([\d.]+)")
+
+
+def test_dev_tier_full_run_is_fast_and_matches_documented_ks():
+    """A genuine end-to-end run (no --dry-run / --estimate-runtime-seconds
+    shortcut) of the smallest, fastest tier -- the same CLI a user actually
+    invokes, run to completion on the default (unbatched, single-thread)
+    backend.
+
+    This is the fast CI correctness gate for the CPU path: `dev` is documented
+    in GRID_TIERS (run_markus_2mm.py) as ~0.2 s and k_s = 1.0580, seeded, so
+    the result is exactly reproducible -- a regression here means the CPU
+    solver's numerics moved, not that a random draw got unlucky.
+    """
+    t0 = time.perf_counter()
+    result = subprocess.run(
+        [sys.executable, str(RUN_MARKUS_2MM), "dev"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    wall_s = time.perf_counter() - t0
+    assert result.returncode == 0, result.stderr
+    assert wall_s < 30, f"'dev' tier took {wall_s:.1f}s, expected a few seconds at most"
+
+    out = result.stdout
+    assert "Wall time (solver_numba, 1 thread(s)):" in out
+    match = KS_RE.search(out)
+    assert match, f"could not find k_s in output:\n{out}"
+    ks = float(match.group(1))
+    expected = f"see GRID_TIERS in {RUN_MARKUS_2MM.name}"
+    assert ks == pytest.approx(1.0580, abs=1e-4), f"k_s = {ks}, expected 1.0580 ({expected})"
 
 
 def test_dry_run_exits_without_simulating():

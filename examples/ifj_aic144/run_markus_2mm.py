@@ -200,16 +200,14 @@ def main(
     config = build_config(tier, dose_rate_water_Gy_s, sampled_radius_cm)
     # "auto": one thread keeps the unbatched backend, so a plain run reproduces
     # the tier table; more than one needs the batched backend, the only one
-    # where a thread count means anything.
+    # where a thread count means anything. "cuda" is the GPU backend
+    # (docs/GPU.md), where --threads is irrelevant.
     #
     # The override matters for one real case: a single-core *baseline* for a
     # large tier. `full_electrode` on the unbatched backend would deposit
     # m * w^2 * no_z per step and take hours, so the 572 s reference figure is
     # the batched backend at `--threads 1`, not the unbatched one. Comparing
     # thread counts means holding the backend fixed.
-    # "auto": one thread keeps the unbatched backend, so a plain run reproduces
-    # the tier table; more than one needs the batched backend. "cuda" is the GPU
-    # backend (docs/GPU.md), where --threads is irrelevant.
     resolved = ("batched" if threads != 1 else "serial") if backend == "auto" else backend
     batched = resolved == "batched"
     use_cuda = resolved == "cuda"
