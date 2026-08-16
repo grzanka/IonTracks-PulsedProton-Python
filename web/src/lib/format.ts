@@ -9,16 +9,25 @@ const SI_PREFIXES: [number, string][] = [
   [1, ""],
 ];
 
+/** The divisor/prefix pair that puts `peak` in [1, 1000). Split out from
+ * `siScale` so a caller tracking a running peak incrementally (as
+ * +page.svelte does for its live plots -- see issue #19 W7) never has to
+ * rescan its full series just to pick a unit. */
+export function scaleForPeak(peak: number): { divisor: number; prefix: string } {
+  const abs = Math.abs(peak);
+  for (const [divisor, prefix] of SI_PREFIXES) {
+    if (abs >= divisor) return { divisor, prefix: prefix ? `${prefix} ` : "" };
+  }
+  return { divisor: 1, prefix: "" };
+}
+
 export function siScale(values: readonly number[]): { divisor: number; prefix: string } {
   let peak = 0;
   for (const v of values) {
     const abs = Math.abs(v);
     if (abs > peak) peak = abs;
   }
-  for (const [divisor, prefix] of SI_PREFIXES) {
-    if (peak >= divisor) return { divisor, prefix: prefix ? `${prefix} ` : "" };
-  }
-  return { divisor: 1, prefix: "" };
+  return scaleForPeak(peak);
 }
 
 export function formatBytes(bytes: number): string {

@@ -63,7 +63,7 @@ def save_diagnostic_plots_from_table(
 
     ``config`` needs only the scalars the figures actually use: `dt`,
     `pulse_duration_s`, `no_xy`, `unit_length_cm`, `inner_radius`,
-    `sampling_radius`, `chamber_fill_fraction` -- a full `SimulationConfig`
+    `sampling_radius`, `chamber_fill_fraction`, `mid_xy` -- a full `SimulationConfig`
     satisfies this, and so does the lightweight stand-in
     `pulsed_ion_chamber.output.load_run_record` builds from a saved run's
     `run_meta.json`, which is how `examples/ifj_aic144/plot.py` calls this
@@ -127,7 +127,12 @@ def save_diagnostic_plots_from_table(
     # --- 4. track areal density cross-section ------------------------------
     density = track_density_per_cm2
     div, prefix = _scale(density.ravel())
-    half_um = 0.5 * config.no_xy * config.unit_length_cm * 1e4
+    # Anchored to mid_xy -- the same voxel inner_radius/outer_radius are
+    # centred on (config.py) -- rather than an independent no_xy/2. The two
+    # agree only when no_xy is even; for odd no_xy, no_xy/2 would offset this
+    # extent half a voxel from the scored-radius circle drawn at (0, 0) below
+    # (issue #19 P6).
+    half_um = config.mid_xy * config.unit_length_cm * 1e4
     extent = (-half_um, half_um, -half_um, half_um)
     fig, ax = plt.subplots(figsize=(6.4, 5.2), layout="constrained")
     image = ax.imshow(density.T / div, origin="lower", extent=extent, cmap="magma")

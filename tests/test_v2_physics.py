@@ -148,7 +148,10 @@ def test_reflecting_wall_leaves_no_frozen_charge_on_the_outer_ring():
     reflecting = run_simulation_numba(
         SimulationConfig(**SMALL, lateral_boundary="reflecting"), progress=False
     )
-    mid = absorbing.config.mid_xy
+    # mid_xy is a float (anchored to outer_radius = no_xy / 2.0, issue #19
+    # P6); SMALL's no_xy is even so it is a whole number, but array indexing
+    # still needs an int.
+    mid = int(absorbing.config.mid_xy)
     k = absorbing.config.no_z_electrode + absorbing.config.no_z // 2
 
     # Charge really is stranded on the absorbing ring, and sits out of

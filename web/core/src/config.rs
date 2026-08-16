@@ -140,7 +140,7 @@ pub struct Config {
     pub no_xy: i64,
     pub no_z: i64,
     pub no_z_with_buffer: i64,
-    pub mid_xy: i64,
+    pub mid_xy: f64,
     pub inner_radius: f64,
     pub inner_radius_sq: f64,
     pub sampling_radius: f64,
@@ -197,6 +197,21 @@ impl Config {
         {
             return Err(ConfigError("All physical inputs must be positive.".into()));
         }
+        // let_kev_um() clamps silently outside the PSTAR table's range,
+        // unlike pulsed_ion_chamber.stopping_power's `interp1d(...,
+        // bounds_error=True)`, which raises there. The UI's own energy
+        // slider (10-250 MeV/u) stays inside [0.1, 500] MeV/u today, but
+        // estimate()/WasmSimulation are exported from the wasm module with
+        // no such guard, so check explicitly here rather than let a
+        // future/direct caller silently get the wrong LET (issue #19 W4).
+        let (e_min, e_max) = crate::stopping_power::table_energy_bounds_mev_u();
+        if params.e_mev_u < e_min || params.e_mev_u > e_max {
+            return Err(ConfigError(format!(
+                "e_mev_u={} MeV/u is outside the PSTAR stopping-power table's range \
+                 [{e_min}, {e_max}] MeV/u.",
+                params.e_mev_u
+            )));
+        }
 
         let unit_length_cm = params.grid_size_um * 1e-4;
         let let_kev_um_ = let_kev_um(params.e_mev_u);
@@ -204,10 +219,23 @@ impl Config {
         let efield_v_cm = params.voltage_v / params.electrode_gap_cm;
         let area_cm2 = PI * params.sampled_radius_cm * params.sampled_radius_cm;
 
-        let no_xy =
-            (2.0 * params.sampled_radius_cm / unit_length_cm).round() as i64 + 2 * BUFFER_RADIUS;
-        let no_z = (params.electrode_gap_cm / unit_length_cm) as i64; // truncation, matches int(...) in config.py
-        let no_z_with_buffer = 2 * NO_Z_ELECTRODE + no_z;
+        // `as i64` on a float saturates (Rust 1.45+: NaN -> 0, out-of-range ->
+        // MIN/MAX) rather than wrapping, but the `+ 2 * BUFFER_RADIUS` right
+        // after it does not -- release builds have no overflow-checks (see
+        // Cargo.toml), so an extreme grid_size_um/sampled_radius_cm pair that
+        // saturates the cast to i64::MAX would silently wrap the sum negative,
+        // and the ABSOLUTE_MAX_GRID_DIM guard a few lines down would never
+        // see it (issue #19 W6). saturating_add keeps the guard reachable.
+        let no_xy = (2.0 * params.sampled_radius_cm / unit_length_cm).round() as i64;
+        let no_xy = no_xy.saturating_add(2 * BUFFER_RADIUS);
+        // Round rather than truncate: bare truncation both loses a whole
+        // voxel to float representation error (0.7 / 0.001 is
+        // 699.9999999999999 in f64) and silently shortens the modelled gap
+        // whenever electrode_gap_cm isn't an exact multiple of
+        // unit_length_cm, while efield_v_cm keeps using the requested
+        // (longer) gap (issue #19 P3, mirrors config.py).
+        let no_z = (params.electrode_gap_cm / unit_length_cm).round() as i64;
+        let no_z_with_buffer = (2 * NO_Z_ELECTRODE).saturating_add(no_z);
         if no_z <= 0 {
             return Err(ConfigError(
                 "electrode_gap_cm is too small for this grid_size_um -- the gap must span at \
@@ -225,8 +253,15 @@ impl Config {
                     .into(),
             ));
         }
-        let mid_xy = no_xy / 2;
+        // mid_xy must equal outer_radius exactly -- both are the grid's true
+        // continuous centre, no_xy as f64 / 2.0 -- rather than mid_xy being
+        // independently integer-divided (`no_xy / 2`). The two agree only
+        // when no_xy is even; for odd no_xy that would centre every radius
+        // test and the sampler half a voxel off from the point outer_radius
+        // and inner_radius are actually measured from (issue #19 P6, mirrors
+        // config.py).
         let outer_radius = no_xy as f64 / 2.0;
+        let mid_xy = outer_radius;
         let inner_radius = outer_radius - BUFFER_RADIUS as f64;
         if inner_radius <= 0.0 {
             return Err(ConfigError(
@@ -479,6 +514,43 @@ mod tests {
         assert!(err.0.contains("voxels"), "{}", err.0);
         assert!(err.0.contains("s on the machine"), "{}", err.0);
         assert!(err.0.contains("cap"), "{}", err.0);
+    }
+
+    #[test]
+    fn energy_outside_the_pstar_table_is_refused() {
+        // Matches pulsed_ion_chamber.stopping_power's interp1d(...,
+        // bounds_error=True): the Python backend raises outside [0.1, 500]
+        // MeV/u, and this crate used to clamp silently instead (issue #19 W4).
+        let mut params = aic144_like(0.008);
+        params.e_mev_u = 0.05; // below the table's minimum
+        let err = Config::build(params).unwrap_err();
+        assert!(err.0.contains("PSTAR"), "{}", err.0);
+
+        params.e_mev_u = 600.0; // above the table's maximum
+        let err = Config::build(params).unwrap_err();
+        assert!(err.0.contains("PSTAR"), "{}", err.0);
+    }
+
+    #[test]
+    fn absurd_inputs_are_refused_rather_than_overflowing_no_xy() {
+        // A grid_size_um/sampled_radius_cm pair extreme enough that
+        // (2*radius/unit_length_cm).round() as i64 saturates to i64::MAX --
+        // the regression case for issue #19 W6. A plain `+ 2*BUFFER_RADIUS`
+        // right after that cast wraps negative in a release build (no
+        // overflow-checks, see Cargo.toml), which used to let a bogus
+        // negative no_xy slip past the ABSOLUTE_MAX_GRID_DIM guard a few
+        // lines below and get refused with a misleading error instead
+        // ("sampled_radius_cm is too small"). saturating_add fixes that.
+        let mut params = aic144_like(0.008);
+        params.sampled_radius_cm = 1e300;
+        // unit_length_cm = 1e-300 * 1e-4 = 1e-304 -- still representable (an
+        // f64 normal goes down to ~2.2e-308), so this isn't a division by
+        // zero. What overflows is the *ratio*: 2*radius/unit_length_cm is
+        // ~2e604, past f64::MAX, so it evaluates to +inf, and `.round() as
+        // i64` on infinity is what saturates to i64::MAX (PR #20 review).
+        params.grid_size_um = 1e-300;
+        let err = Config::build(params).unwrap_err();
+        assert!(err.0.contains("absurdly large"), "{}", err.0);
     }
 
     #[test]

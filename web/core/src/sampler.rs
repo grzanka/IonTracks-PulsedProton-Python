@@ -50,15 +50,15 @@ pub fn build_schedule(
 /// `(mid_xy, mid_xy)`.
 pub fn sample_xy_inside_cylinder(
     rng: &mut Pcg64,
-    mid_xy: i64,
+    mid_xy: f64,
     inner_radius_sq: f64,
     no_xy: i64,
 ) -> (f64, f64) {
     loop {
         let x = rng.random::<f64>() * no_xy as f64;
         let y = rng.random::<f64>() * no_xy as f64;
-        let dx = x - mid_xy as f64;
-        let dy = y - mid_xy as f64;
+        let dx = x - mid_xy;
+        let dy = y - mid_xy;
         if dx * dx + dy * dy <= inner_radius_sq {
             return (x, y);
         }

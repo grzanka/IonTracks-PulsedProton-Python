@@ -29,9 +29,23 @@ fn pstar_table() -> &'static Vec<(f64, f64)> {
     })
 }
 
+/// `(min, max)` proton energy the PSTAR table covers, in MeV/u -- what
+/// `Config::build` checks `e_mev_u` against before calling [`let_kev_um`], so
+/// this crate errors the same way `pulsed_ion_chamber.stopping_power`'s
+/// `interp1d(..., bounds_error=True)` does outside the table, rather than
+/// [`let_kev_um`]'s own silent clamp (issue #19 W4). Computed from the table
+/// itself rather than hardcoded, so the two can never drift apart.
+pub fn table_energy_bounds_mev_u() -> (f64, f64) {
+    let table = pstar_table();
+    (table[0].0, table[table.len() - 1].0)
+}
+
 /// Linear interpolation of proton LET in dry air, matching
 /// `scipy.interpolate.interp1d`'s default (linear) kind. Clamps to the
-/// table's endpoints rather than extrapolating outside `[0.1, 500]` MeV/u.
+/// table's endpoints rather than extrapolating outside `[0.1, 500]` MeV/u --
+/// callers that need the Python backend's `bounds_error=True` behaviour
+/// instead (an explicit error rather than a silently wrong LET) should check
+/// `table_energy_bounds_mev_u()` themselves first; `Config::build` does.
 pub fn let_kev_um(e_mev_u: f64) -> f64 {
     let table = pstar_table();
     let n = table.len();

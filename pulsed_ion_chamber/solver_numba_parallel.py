@@ -263,7 +263,16 @@ def _broadcast_density_numba_parallel(
         # Injected charge is scored on the same voxel set as recombination, so
         # the two are directly comparable and the voxel volume cancels in f.
         # The column contributes no_z identical layers, hence the factor.
-        if (i - mid_xy) ** 2 + (j - mid_xy) ** 2 < scoring_radius_sq:
+        # Restricted to the interior the Lax-Wendroff sweep actually visits
+        # (1 <= i,j <= no_xy-2): under "full_grid" scoring, scoring_radius_sq
+        # alone always passes, and without this bound the never-swept outer
+        # ring would be counted as injected charge that can structurally
+        # never recombine (see issue #19 P2).
+        if (
+            1 <= i <= no_xy - 2
+            and 1 <= j <= no_xy - 2
+            and (i - mid_xy) ** 2 + (j - mid_xy) ** 2 < scoring_radius_sq
+        ):
             inserted += density * no_z
     return inserted
 
@@ -397,8 +406,11 @@ def _lax_wendroff_step_numba_parallel(
 
             # Score only inside the disc *and* between the electrodes: charge
             # that has drifted into the electrode buffer has been collected and
-            # must not keep contributing.
-            if inside and no_z_electrode < k < (no_z + no_z_electrode):
+            # must not keep contributing. k == no_z_electrode is the *first*
+            # gap layer -- deposition writes it (k_lo == no_z_electrode) and it
+            # must be scored too, or injected and recombined charge integrate
+            # different voxel sets (see issue #19 P1).
+            if inside and no_z_electrode <= k < (no_z + no_z_electrode):
                 recombined += recomb
                 total_positive += p_out
                 total_negative += n_out
@@ -462,9 +474,13 @@ def warmup_parallel() -> None:
     )
     offsets, track_ids = _build_row_index(li, hi, 4)
     _accumulate_track_density_numba_parallel(total, gi, gj, li, lj, hj, offsets, track_ids, 4)
-    _broadcast_density_numba_parallel(p, n, total, 4, 1, 1, 1.0, 2, 1.0)
+    # mid_xy (the 2.0 below) is a float in production (config.py anchors it
+    # to outer_radius = no_xy / 2.0, see issue #19 P6) -- matching that type
+    # here is what makes this a real warmup rather than pre-compiling a
+    # specialization run_simulation_numba_parallel never actually calls.
+    _broadcast_density_numba_parallel(p, n, total, 4, 1, 1, 1.0, 2.0, 1.0)
     _lax_wendroff_step_numba_parallel(
-        p, n, p_next, n_next, 4, 4, 1, 1, 2, 1.0, 0.01, 0.01, 0.01, 0.97, 0.01, 0.01, 0.01, 0.97, 1e-9
+        p, n, p_next, n_next, 4, 4, 1, 1, 2.0, 1.0, 0.01, 0.01, 0.01, 0.97, 0.01, 0.01, 0.01, 0.97, 1e-9
     )
 
 
@@ -694,7 +710,12 @@ def run_simulation_numba_parallel(
         print(timer.report(config.total_time_steps))
 
     time_s: FloatArray1D = (np.arange(config.total_time_steps) + 1) * config.dt
-    ks = 1.0 / f_t[-1]
+    # f_t is initialised to all-ones, so a run stopped early by max_wall_s
+    # would otherwise report ks = 1.0 -- a physically meaningful-looking "no
+    # recombination at all" for a run that never got far enough to say that.
+    # NaN makes the truncation impossible to miss (see issue #19 P7).
+    truncated = max_wall_s is not None and steps_completed < config.total_time_steps
+    ks = float("nan") if truncated else 1.0 / f_t[-1]
     result = diagnostics.build_result(config, time_s, f_t, ks, positive_array, negative_array)
     if max_wall_s is not None:
         result.steps_completed = steps_completed

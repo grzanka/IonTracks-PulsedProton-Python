@@ -7,7 +7,7 @@ import type { ProgressChunk, WorkerToMainMessage } from "./protocol";
 export interface SimulationCallbacks {
   onInvalid: (error: string) => void;
   onProgress: (chunk: ProgressChunk, stepIndex: number, totalSteps: number, ks: number) => void;
-  onDone: (ks: number, stepsCompleted: number) => void;
+  onDone: (ks: number, stepsCompleted: number, trackDensityXy: number[], noXy: number) => void;
   onCancelled: () => void;
   onError: (message: string) => void;
 }
@@ -36,7 +36,12 @@ export class SimulationController {
           callbacks.onProgress(message.chunk, message.stepIndex, message.totalSteps, message.ks);
           break;
         case "done":
-          callbacks.onDone(message.ks, message.stepsCompleted);
+          callbacks.onDone(
+            message.ks,
+            message.stepsCompleted,
+            message.trackDensityXy,
+            message.noXy,
+          );
           break;
         case "cancelled":
           callbacks.onCancelled();

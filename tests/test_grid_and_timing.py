@@ -66,6 +66,32 @@ def test_rf_period_longer_than_dt_warns():
         SimulationConfig(rf_frequency_hz=1.0, seed=0)
 
 
+def test_summary_omits_the_gap_note_for_float_noise_alone():
+    """summary()'s "simulated as ..." note must not fire on ~1e-16 float
+    round-off alone: no_z * unit_length_cm and the original electrode_gap_cm
+    can differ by float noise even when no_z is the exact right voxel count
+    (0.7 / 0.001 rounds to 700, but 700 * 0.001 == 0.7000000000000001, not
+    bit-identical to the literal 0.7). Comparing with exact `==` would flag
+    this as a "simulated as ..." mismatch on every such call (PR #20 review)."""
+    config = SimulationConfig(grid_size_um=10.0, electrode_gap_cm=0.7, seed=0)
+    assert config.no_z == 700
+    assert config.effective_gap_cm != config.electrode_gap_cm  # float noise is real here
+    assert abs(config.effective_gap_cm - config.electrode_gap_cm) < 1e-9
+    assert "simulated as" not in config.summary()
+
+
+def test_summary_reports_the_gap_note_for_a_genuine_mismatch():
+    # 0.05 cm / 40 um doesn't divide evenly: no_z = round(0.05/0.004) = 12
+    # (0.05/0.004 == 12.5 exactly, and round() rounds half to even), so the
+    # simulated gap is 0.048 cm -- 4% off, large enough that a warning also
+    # fires (see the P3 warning tests above), and nowhere near a tolerance
+    # that could be mistaken for float round-off.
+    with pytest.warns(UserWarning, match="electrode_gap_cm"):
+        config = SimulationConfig(grid_size_um=40.0, electrode_gap_cm=0.05, seed=0)
+    assert config.no_z == 12
+    assert "simulated as 12 voxels" in config.summary()
+
+
 # --- track sampling ---------------------------------------------------------
 
 

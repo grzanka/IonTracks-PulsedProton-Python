@@ -26,3 +26,12 @@ This applies to every `.md` file in the repo (`docs/`, `examples/`,
 `profiling/`, top-level `README.md`), not just ones you're actively editing —
 if you touch a file with an existing multi-command block, split it while
 you're there.
+
+## Do not open the web app yourself
+
+Don't launch `web/` in a browser (via `claude-in-chrome`, `pnpm dev`, screenshot
+tools, or otherwise) to check your own changes. The user checks the running app
+manually. Verify web changes with the existing non-browser tools instead:
+`pnpm run build:wasm`, `pnpm run check` (svelte-check + tsc), `pnpm run lint`,
+`pnpm run format:check`, `pnpm run build`, and `cargo test`/`cargo clippy` for
+the Rust core.

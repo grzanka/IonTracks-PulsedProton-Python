@@ -57,7 +57,7 @@ Three transverse radii, all in voxel units from the centre `mid_xy`:
 |---|---|
 | `sampling_radius` | tracks are placed inside this (`inner_radius × chamber_fill_fraction`) |
 | `inner_radius` | `= sampled_radius_cm / unit_length_cm`; the scored disc |
-| `outer_radius = no_xy/2` | the array edge; `buffer_radius` voxels further out |
+| `outer_radius = no_xy/2` | the array edge; `buffer_radius` voxels further out. `mid_xy` equals this exactly (both are `no_xy/2.0`, a float) rather than being independently floor-divided, so the two never disagree for odd `no_xy` (issue #19 P6) |
 
 Comparisons against these are done on **squared** distances
 (`scoring_radius_sq`) so no `sqrt` is called per voxel. `scoring_region` selects

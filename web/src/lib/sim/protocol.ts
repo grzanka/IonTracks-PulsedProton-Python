@@ -25,7 +25,17 @@ export interface ProgressChunk {
 export type WorkerToMainMessage =
   | { type: "invalid"; error: string }
   | { type: "progress"; chunk: ProgressChunk; stepIndex: number; totalSteps: number; ks: number }
-  | { type: "done"; ks: number; stepsCompleted: number }
+  | {
+      type: "done";
+      ks: number;
+      stepsCompleted: number;
+      // Track-centre counts per voxel column, no_xy * no_xy flattened
+      // row-major -- read once at completion for the track-density
+      // cross-section view (issue #6 milestone 5), not streamed like the
+      // scalar time series above.
+      trackDensityXy: number[];
+      noXy: number;
+    }
   | { type: "cancelled" }
   | { type: "error"; message: string }
   | {

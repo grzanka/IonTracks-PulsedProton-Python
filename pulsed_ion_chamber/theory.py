@@ -40,26 +40,37 @@ _K2_CM2_VS = 2.1  # negative ions
 _E_CHARGE_C = 1.60217662e-19
 
 
-def jaffe_ks(LET_keV_um, voltage_V, electrode_gap_cm):
-    """Jaffe theory recombination correction factor k_s = 1/f for a single track."""
+def jaffe_ks(LET_keV_um, voltage_V, electrode_gap_cm, W_eV=None, mu=None, D=None, alpha=None):
+    """Jaffe theory recombination correction factor k_s = 1/f for a single track.
+
+    ``W_eV``, ``mu``, ``D`` and ``alpha`` default to this module's constants
+    (the original IonTracks-Cython single-averaged-species values), which
+    reproduces every call site that predates these parameters exactly. Pass a
+    ``SimulationConfig``'s own ``W_eV``/``mu_positive``/``D_positive``
+    whenever the solver run being cross-checked overrode them -- recombination
+    scales as ``N0**2`` (via ``W_eV``), so comparing against a reference that
+    silently kept the default is a real error, not a rounding one: a config
+    with ``W_eV=33.0`` (~3.6% below the 34.2 default) recombines ~7% more than
+    a Jaffe reference computed with the default would predict (issue #19 P4).
+    ``alpha`` is this module's own averaged-species Boag/Jaffe constant
+    (``_ALPHA_CM3_S``), independent of ``constants.RECOMBINATION_ALPHA_CM3_S``
+    the PDE solver uses -- pass it explicitly to compare like with like if a
+    config ever diverges from the default there too.
+    """
+    W_eV = W_EV_PER_ION_PAIR if W_eV is None else W_eV
+    mu = ION_MOBILITY_CM2_VS if mu is None else mu
+    D = ION_DIFFUSION_CM2_S if D is None else D
+    alpha = _ALPHA_CM3_S if alpha is None else alpha
+
     LET_eV_cm = LET_keV_um * 1e7
     electric_field = voltage_V / electrode_gap_cm
     b_cm = calc_track_radius_cm(LET_keV_um)
 
-    N0 = LET_eV_cm / W_EV_PER_ION_PAIR
-    g = _ALPHA_CM3_S * N0 / (8.0 * pi * ION_DIFFUSION_CM2_S)
+    N0 = LET_eV_cm / W_eV
+    g = alpha * N0 / (8.0 * pi * D)
 
-    factor = (
-        mpmath.exp(-1.0 / g)
-        * ION_MOBILITY_CM2_VS
-        * b_cm**2
-        * electric_field
-        / (2.0 * g * electrode_gap_cm * ION_DIFFUSION_CM2_S)
-    )
-    first_term = mpmath.ei(
-        1.0 / g
-        + log(1.0 + (2.0 * electrode_gap_cm * ION_DIFFUSION_CM2_S / (ION_MOBILITY_CM2_VS * b_cm**2 * electric_field)))
-    )
+    factor = mpmath.exp(-1.0 / g) * mu * b_cm**2 * electric_field / (2.0 * g * electrode_gap_cm * D)
+    first_term = mpmath.ei(1.0 / g + log(1.0 + (2.0 * electrode_gap_cm * D / (mu * b_cm**2 * electric_field))))
     second_term = mpmath.ei(1.0 / g)
     f = factor * (first_term - second_term)
     return float(1.0 / f)

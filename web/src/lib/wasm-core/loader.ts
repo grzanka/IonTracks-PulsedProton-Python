@@ -48,6 +48,9 @@ export interface Estimate {
   dtNs: number;
   letKevUm: number;
   trackRadiusUm: number;
+  /** Scored-disc radius, in voxels -- what the track-density cross-section
+   * view (issue #6 milestone 5) draws its overlay circle at. */
+  innerRadiusVoxels: number;
 }
 
 /** Instant, allocation-free -- call `loadWasm()` first, but never await it in a hot path. */
@@ -73,6 +76,7 @@ export function estimate(params: SimParams): Estimate {
     dtNs: e.dt_ns,
     letKevUm: e.let_kev_um,
     trackRadiusUm: e.track_radius_um,
+    innerRadiusVoxels: e.inner_radius_voxels,
   };
 }
 
