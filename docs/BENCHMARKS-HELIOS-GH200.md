@@ -139,6 +139,39 @@ voxel, and only the two z-neighbours are unit-stride, so the real DRAM traffic
 is a multiple of the compulsory figure. It does say where the remaining
 head-room is: shared-memory tiling of the transverse stencil (GPU.md §9).
 
+### What the refinement buys
+
+Resolution is only worth paying for if the answer moves. The same three tiers
+run *to completion* — a real `k_s`, not a per-step cost:
+
+| voxel size | steps | wall | `k_s` | recombined | shift vs 10 µm |
+|---|---|---|---|---|---|
+| 10 µm | 2 194 | 3.5 s | 1.1087504 | 9.81 % | — |
+| 5 µm | 4 580 | 11.4 s | 1.1081197 | 9.76 % | −0.057 % |
+| **2 µm** | **13 019** | **183 s** | **1.1078208** | **9.73 %** | −0.084 % |
+
+**`k_s` is already converged to better than 0.1 % at 10 µm here**, and the two
+refinements move it by 6.3e-4 and then 3.0e-4 — close to first order in `h`, so
+linear extrapolation puts the `h → 0` limit near 1.10762, about 0.02 % below
+the 2 µm value. The physics case for 1 µm on *this* geometry is therefore weak,
+and this table is the honest answer to "how fine should I go": not this fine.
+
+What the capability is for is the cases where that does not hold — steeper
+gradients, higher fields, smaller track radii, FLASH dose rates — where the
+convergence tail is longer and, until now, untestable. The discretisation error
+is now a measured, extrapolable quantity rather than an assumption.
+
+Note the per-step costs here are lower than §4's — 14.0 ms against 15.4 at
+2 µm, 1.6 against 2.6 at 10 µm. That is a property of `--max-steps`, not noise:
+the pulse arrives at the start of the run, so a 200-step slice is
+disproportionately deposition, and truncated timings **over**-estimate the
+steady-state step cost by up to 60 % on the small grids. Use them to compare
+rows with each other, not as a prediction of a full run's wall clock.
+
+```bash
+python profiling/bench_gh200.py --sizes 0.05@10,0.05@5,0.05@2 --max-steps 0
+```
+
 ## 5. Where to put the arrays
 
 The same 259 M-voxel grid — one that comfortably fits in HBM — through every
