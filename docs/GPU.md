@@ -10,10 +10,10 @@ for the CPU cost model [PERFORMANCE.md](PERFORMANCE.md).
 CPU's cache, and the win then grows with size. On one A100-40GB the full Markus
 electrode at 10 µm runs **15× faster than 32 CPU cores** (219 s → 14.5 s), and
 the 5 µm full electrode — 466 M voxels, 14.9 GiB of carrier arrays, which no CPU
-cache can hold — runs in **156 s** on the GPU against ~59 min on 32 cores. `k_s`
-is identical to the CPU reference to six digits in every case. A *small* grid is
-faster on one CPU core: below ~r = 0.05 cm the GPU loses to launch latency, so
-this backend is for large grids only.
+cache can hold — runs in **156 s** on the GPU against **50 min on 32 cores
+(19×)**. `k_s` is identical to the CPU reference to six digits in every case. A
+*small* grid is faster on one CPU core: below ~r = 0.05 cm the GPU loses to
+launch latency, so this backend is for large grids only.
 
 ---
 
@@ -139,16 +139,14 @@ spare.
 
 | | CPU 32-core | GPU (A100) | speed-up |
 |---|---|---|---|
-| **5 µm full electrode** (466 M vox, 4580 steps) | ~3550 s (~59 min)¹ | **156 s** | **~23×** |
-| `k_s` | 1.110473² | 1.110473 | identical |
+| **5 µm full electrode** (466 M vox, 4580 steps) | 3000 s (50 min)¹ | **156 s** | **19.2×** |
+| `k_s` | 1.1104725895 | 1.1104725895 | identical (8e-16)² |
 | device memory | — | 13.9 GiB / 40 GiB | — |
 
-¹ Batched CPU backend, 32 threads, same node, extrapolated from the 10 µm full
-electrode (219 s) by the grid's 7.8× voxels × 2.1× steps; both are DRAM-resident
-so the per-voxel-step cost is comparable. A direct measurement is in
-`profiling/data/gpu_athena/cpu_5um_full_electrode.json`.
-² The GPU `k_s` is the reference here; the CPU value is expected identical (as at
-every other size in §4), and the direct run above confirms it.
+¹ Batched CPU backend, 32 threads, same node — measured, not extrapolated
+(`profiling/data/gpu_athena/cpu_5um_full_electrode.json`).
+² Relative difference in `k_s`; the two agree to the last two bits even on this
+466 M-voxel, 4580-step run — the reduction order differs, the physics does not.
 
 This is the case the GPU was brought in for: a converged-resolution full-electrode
 run that is a coffee break on the GPU instead of an hour on a whole CPU node, and

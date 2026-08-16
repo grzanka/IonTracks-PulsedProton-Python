@@ -1,0 +1,20 @@
+{
+  "host": "t0028",
+  "threads_cpu": 32,
+  "dose_rate_water_Gy_s": 10.0,
+  "slurm_job_id": "2945681",
+  "rows": [
+    {
+      "sampled_radius_cm": 0.265,
+      "grid_size_um": 5.0,
+      "no_xy": 1066,
+      "no_z_with_buffer": 410,
+      "voxels": 465905960,
+      "tracks_per_pulse": 24630400,
+      "total_time_steps": 4580,
+      "gpu_carrier_gib": 13.885079622268677,
+      "cpu_wall_s": 2999.6803525248542,
+      "cpu_ks": 1.1104725894530167
+    }
+  ]
+}
