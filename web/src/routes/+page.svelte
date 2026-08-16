@@ -5,7 +5,7 @@
   import { estimate, loadWasm, type Estimate, type SimParams } from "$lib/wasm-core/loader";
   import { SimulationController } from "$lib/sim/controller";
   import type { ProgressChunk } from "$lib/sim/protocol";
-  import { formatBytes, formatCount, formatSeconds, siScale } from "$lib/format";
+  import { formatBytes, formatCount, formatSeconds, scaleForPeak } from "$lib/format";
   import {
     DOSE_RATE_UNITS,
     ENERGY_UNITS,
@@ -30,6 +30,27 @@
   let sampledRadiusCm = $state(0.008);
   let gridSizeUm = $state(10);
 
+  // Per-field validity, surfaced from each UnitField below (issue #19 W3) --
+  // without this, an out-of-range edit leaves the field showing rejected
+  // text while `sizing`/Run still reflect the last *valid* value, so the run
+  // that starts silently doesn't match what's on screen.
+  let eMevUInvalid = $state(false);
+  let voltageVInvalid = $state(false);
+  let electrodeGapCmInvalid = $state(false);
+  let doseRateGySInvalid = $state(false);
+  let pulseDurationSInvalid = $state(false);
+  let sampledRadiusCmInvalid = $state(false);
+  let gridSizeUmInvalid = $state(false);
+  let anyFieldInvalid = $derived(
+    eMevUInvalid ||
+      voltageVInvalid ||
+      electrodeGapCmInvalid ||
+      doseRateGySInvalid ||
+      pulseDurationSInvalid ||
+      sampledRadiusCmInvalid ||
+      gridSizeUmInvalid,
+  );
+
   let phase = $state<Phase>("setup");
   let errorMessage = $state("");
   let stepIndex = $state(0);
@@ -41,6 +62,13 @@
   let nPositive: number[] = $state([]);
   let nNegative: number[] = $state([]);
   let recombined: number[] = $state([]);
+  // Running peaks, updated incrementally in onProgress below (each new
+  // chunk's own few points, not a rescan of the whole series) rather than
+  // recomputed from siScale([...nPositive, ...nNegative]) on every chunk --
+  // that spread-and-scan is O(run length) per chunk, so cost over a long run
+  // grew with the run itself instead of staying flat (issue #19 W7).
+  let carrierPeak = $state(0);
+  let recombinedPeak = $state(0);
 
   const controller = new SimulationController();
 
@@ -105,7 +133,7 @@
   });
 
   function runTimeEstimate(): void {
-    if (!sizing?.ok) return;
+    if (!sizing?.ok || anyFieldInvalid) return;
     const generation = ++timeEstimateGeneration;
     timeEstimateState = "measuring";
     timeEstimateSeconds = undefined;
@@ -135,7 +163,7 @@
   }
 
   function startRun(): void {
-    if (!sizing?.ok) return;
+    if (!sizing?.ok || anyFieldInvalid) return;
     phase = "running";
     errorMessage = "";
     stepIndex = 0;
@@ -146,6 +174,8 @@
     nPositive = [];
     nNegative = [];
     recombined = [];
+    carrierPeak = 0;
+    recombinedPeak = 0;
 
     // A fresh, unexposed seed per run: statistical noise between runs of the
     // same config is real physics (docs/PHYSICS.md sec. 14), not something
@@ -158,9 +188,18 @@
       },
       onProgress: (chunk: ProgressChunk, step, total, ks) => {
         for (const t of chunk.timeS) timeUs.push(t * 1e6);
-        for (const v of chunk.nPositive) nPositive.push(v);
-        for (const v of chunk.nNegative) nNegative.push(v);
-        for (const v of chunk.recombined) recombined.push(v);
+        for (const v of chunk.nPositive) {
+          nPositive.push(v);
+          if (v > carrierPeak) carrierPeak = v;
+        }
+        for (const v of chunk.nNegative) {
+          nNegative.push(v);
+          if (v > carrierPeak) carrierPeak = v;
+        }
+        for (const v of chunk.recombined) {
+          recombined.push(v);
+          if (v > recombinedPeak) recombinedPeak = v;
+        }
         stepIndex = step;
         totalSteps = total;
         runningKs = ks;
@@ -188,8 +227,8 @@
     phase = "setup";
   }
 
-  let carrierScale = $derived(siScale([...nPositive, ...nNegative]));
-  let recombinedScale = $derived(siScale(recombined));
+  let carrierScale = $derived(scaleForPeak(carrierPeak));
+  let recombinedScale = $derived(scaleForPeak(recombinedPeak));
   let progressPct = $derived(totalSteps > 0 ? Math.min(100, (100 * stepIndex) / totalSteps) : 0);
 </script>
 
@@ -223,6 +262,7 @@
           units={ENERGY_UNITS}
           defaultUnitSymbol="MeV"
           bind:value={eMevU}
+          bind:invalid={eMevUInvalid}
           min={10}
           max={250}
         />
@@ -231,6 +271,7 @@
           units={VOLTAGE_UNITS}
           defaultUnitSymbol="V"
           bind:value={voltageV}
+          bind:invalid={voltageVInvalid}
           min={50}
           max={1000}
         />
@@ -239,6 +280,7 @@
           units={GAP_LENGTH_UNITS}
           defaultUnitSymbol="cm"
           bind:value={electrodeGapCm}
+          bind:invalid={electrodeGapCmInvalid}
           min={0.05}
           max={1.0}
         />
@@ -247,6 +289,7 @@
           units={DOSE_RATE_UNITS}
           defaultUnitSymbol="Gy/s"
           bind:value={doseRateGyS}
+          bind:invalid={doseRateGySInvalid}
           min={0.1}
           max={100}
         />
@@ -255,6 +298,7 @@
           units={PULSE_TIME_UNITS}
           defaultUnitSymbol="µs"
           bind:value={pulseDurationS}
+          bind:invalid={pulseDurationSInvalid}
           min={50e-6}
           max={2000e-6}
         />
@@ -263,6 +307,9 @@
           units={RADIUS_LENGTH_UNITS}
           defaultUnitSymbol="mm"
           bind:value={sampledRadiusCm}
+          bind:invalid={sampledRadiusCmInvalid}
+          min={1e-4}
+          max={1.0}
           hint={`≈ ${radiusPercentOfMarkus.toFixed(1)}% of the full Markus PTW 23343 chamber radius (2.65 mm)`}
         />
         <UnitField
@@ -270,6 +317,9 @@
           units={GRID_SIZE_UNITS}
           defaultUnitSymbol="µm"
           bind:value={gridSizeUm}
+          bind:invalid={gridSizeUmInvalid}
+          min={1}
+          max={1000}
           hint="10 µm is the validated default (resolves the ~20 µm track core); finer is much more expensive -- see the estimate below."
         />
       </div>
@@ -323,7 +373,7 @@
               <button
                 type="button"
                 onclick={runTimeEstimate}
-                disabled={timeEstimateState === "measuring"}
+                disabled={timeEstimateState === "measuring" || anyFieldInvalid}
               >
                 {timeEstimateState === "measuring" ? "Measuring... (~3s)" : "Estimate running time"}
               </button>
@@ -337,7 +387,15 @@
             </div>
           </div>
           <p class="ok-note">Within this prototype's browser safety limits.</p>
-          <button type="button" class="primary" onclick={startRun}>Run simulation</button>
+          {#if anyFieldInvalid}
+            <p class="error-note">
+              One or more fields above are out of range -- fix them before running (issue #19 W3: a
+              rejected edit used to leave the old value in effect with no visible warning here).
+            </p>
+          {/if}
+          <button type="button" class="primary" onclick={startRun} disabled={anyFieldInvalid}>
+            Run simulation
+          </button>
         {:else}
           <p class="error-note">{sizing.error}</p>
           <button type="button" class="primary" disabled>Run simulation</button>
@@ -378,32 +436,19 @@
         <LinePlot
           title="Charge-carrier evolution"
           xValues={timeUs}
+          valueDivisor={carrierScale.divisor}
           yLabel={`carriers present [${carrierScale.prefix}ion pairs]`}
           series={[
-            {
-              label: "positive",
-              color: "#2563eb",
-              values: nPositive.map((v) => v / carrierScale.divisor),
-            },
-            {
-              label: "negative",
-              color: "#dc2626",
-              dashed: true,
-              values: nNegative.map((v) => v / carrierScale.divisor),
-            },
+            { label: "positive", color: "#2563eb", values: nPositive },
+            { label: "negative", color: "#dc2626", dashed: true, values: nNegative },
           ]}
         />
         <LinePlot
           title="Recombination rate"
           xValues={timeUs}
+          valueDivisor={recombinedScale.divisor}
           yLabel={`recombination [${recombinedScale.prefix}ion pairs / step]`}
-          series={[
-            {
-              label: "recombined",
-              color: "#b91c1c",
-              values: recombined.map((v) => v / recombinedScale.divisor),
-            },
-          ]}
+          series={[{ label: "recombined", color: "#b91c1c", values: recombined }]}
         />
       </div>
     </section>

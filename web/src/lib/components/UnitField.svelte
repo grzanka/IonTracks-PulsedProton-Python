@@ -14,9 +14,27 @@
     min?: number; // base unit
     max?: number; // base unit
     hint?: string;
+    // Bindable: true whenever the displayed text failed to parse or is out
+    // of range, so a rejected edit leaves `value` at its last-valid number
+    // (see handleInput) while still being visible to the parent -- without
+    // this, +page.svelte has no way to know the field it is about to run
+    // with doesn't match what's on screen (issue #19 W3).
+    invalid?: boolean;
   }
 
-  let { label, units, value = $bindable(), defaultUnitSymbol, min, max, hint }: Props = $props();
+  let {
+    label,
+    units,
+    value = $bindable(),
+    defaultUnitSymbol,
+    min,
+    max,
+    hint,
+    // The rule can't see that this default is read externally, at mount, by
+    // whichever parent binds `invalid`; it isn't a dead store.
+    // eslint-disable-next-line no-useless-assignment
+    invalid = $bindable(false),
+  }: Props = $props();
 
   function findUnit(symbol: string | undefined): UnitDef {
     const found = symbol ? units.find((u) => u.symbol === symbol) : undefined;
@@ -48,10 +66,12 @@
     const result = parseValueWithUnit(raw, units);
     if ("empty" in result) {
       error = "required";
+      invalid = true;
       return;
     }
     if ("error" in result) {
       error = result.error;
+      invalid = true;
       return;
     }
     const unit = result.unit ?? selected;
@@ -59,9 +79,11 @@
     const base = toBase(result.value, unit);
     if ((min !== undefined && base < min) || (max !== undefined && base > max)) {
       error = rangeMessage(unit);
+      invalid = true;
       return;
     }
     error = "";
+    invalid = false;
     value = base;
   }
 
