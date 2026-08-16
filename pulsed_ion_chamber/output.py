@@ -47,6 +47,7 @@ _PLOT_CONFIG_FIELDS = (
     "inner_radius",
     "sampling_radius",
     "chamber_fill_fraction",
+    "mid_xy",
 )
 
 COLLECTED_CHARGE_COLUMNS = (
