@@ -201,18 +201,51 @@ class SimulationConfig:
         # Round rather than truncate: int() silently shrinks the sampled disc
         # (0.0084 cm at 10 um/voxel truncates 16.8 -> 16, an 80 um radius)
         # while area_cm2 above still uses the requested 84 um, which would put
-        # ~10% more charge into the grid than the track count implies.
+        # ~10% more charge into the grid than the track count implies. no_z has
+        # the same failure mode -- bare int() both loses a whole voxel to float
+        # representation error (0.7 / 0.001 is 699.9999999999999 in float64) and,
+        # whenever electrode_gap_cm is not an exact multiple of unit_length_cm,
+        # silently shortens the modelled gap while Efield_V_cm and every
+        # Boag/Jaffe reference keep using the requested (longer) one.
         self.no_xy = int(round(2 * self.sampled_radius_cm / self.unit_length_cm)) + 2 * self.buffer_radius
-        self.no_z = int(self.electrode_gap_cm / self.unit_length_cm)
+        self.no_z = int(round(self.electrode_gap_cm / self.unit_length_cm))
         self.no_z_with_buffer = 2 * self.no_z_electrode + self.no_z
+        # The chamber the grid actually represents -- report it even when it
+        # matches the requested gap exactly, so callers never have to guess
+        # which one a given run used.
+        self.effective_gap_cm = self.no_z * self.unit_length_cm
+        gap_mismatch_cm = abs(self.effective_gap_cm - self.electrode_gap_cm)
+        if self.electrode_gap_cm > 0 and gap_mismatch_cm / self.electrode_gap_cm > 1e-3:
+            warnings.warn(
+                f"electrode_gap_cm={self.electrode_gap_cm:.6g} cm is not an integer "
+                f"multiple of grid_size_um={self.grid_size_um:.4g} um "
+                f"({self.unit_length_cm:.6g} cm/voxel): the simulated gap is "
+                f"no_z={self.no_z} voxels = {self.effective_gap_cm:.6g} cm, "
+                f"{100 * (self.effective_gap_cm - self.electrode_gap_cm) / self.electrode_gap_cm:+.2g}% "
+                "off the requested value, while Efield_V_cm and the Boag/Jaffe "
+                "references are still computed from the requested gap. Choose "
+                "grid_size_um so electrode_gap_cm/grid_size_um is close to an "
+                "integer, or accept the mismatch reported in summary().",
+                stacklevel=2,
+            )
         if self.no_xy * self.no_xy * self.no_z > self.max_voxels:
             raise ValueError(
                 f"Grid too large: {self.no_xy}x{self.no_xy}x{self.no_z} "
                 f"({self.no_xy * self.no_xy * self.no_z:.3g} voxels). "
                 "Increase grid_size_um or reduce sampled_radius_cm."
             )
-        self.mid_xy = self.no_xy // 2
+        # mid_xy must equal outer_radius exactly -- both are the grid's true
+        # continuous centre, no_xy/2.0 -- rather than mid_xy being
+        # independently floor-divided (`no_xy // 2`). The two agree only when
+        # no_xy is even; for odd no_xy that would centre every radius test
+        # and the sampler half a voxel off from the point outer_radius and
+        # inner_radius are actually measured from (issue #19 P6). Kept as a
+        # float rather than rounded back to an int so this fixes the offset
+        # instead of just moving it: every (i - mid_xy) in the kernels below
+        # is float arithmetic already (h2, b2, ... are all float), so this
+        # costs nothing.
         self.outer_radius = self.no_xy / 2.0
+        self.mid_xy = self.outer_radius
         self.inner_radius = self.outer_radius - self.buffer_radius
         if self.inner_radius <= 0:
             # pulses.sample_xy_inside_cylinder rejection-samples uniformly in
@@ -478,10 +511,18 @@ class SimulationConfig:
                 f"{self.track_cutoff_cm * 1e4:.3g} um = {self.track_cutoff_voxels:.1f} voxels "
                 f"(discards {self.truncated_charge_fraction:.1e} of each track)"
             )
+        gap_note = (
+            ""
+            if self.effective_gap_cm == self.electrode_gap_cm
+            else (
+                f" [simulated as {self.no_z} voxels = {self.effective_gap_cm:.6g} cm, "
+                f"{100 * (self.effective_gap_cm - self.electrode_gap_cm) / self.electrode_gap_cm:+.2g}%]"
+            )
+        )
         return (
             f"Particle              : {self.particle} @ {self.E_MeV_u:.1f} MeV/u "
             f"(LET = {self.LET_keV_um:.3g} keV/um, track radius b = {self.track_radius_cm * 1e4:.3g} um)\n"
-            f"Chamber               : gap = {self.electrode_gap_cm} cm, V = {self.voltage_V} V "
+            f"Chamber               : gap = {self.electrode_gap_cm} cm{gap_note}, V = {self.voltage_V} V "
             f"(E = {self.Efield_V_cm:.4g} V/cm)\n"
             f"{carrier_line}"
             f"Gas / W               : rho_air = {self.air_density_kg_m3:.4g} kg/m^3, W = {self.W_eV:.4g} eV/ion pair\n"
