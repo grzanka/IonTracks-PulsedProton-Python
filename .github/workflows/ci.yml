@@ -1,8 +1,9 @@
 name: CI
 
-# Covers the web/ prototype (web/core's Rust crate + the SvelteKit app in
-# web/) only -- the Python package's own tests are run separately (pytest,
-# see the top-level README) and aren't wired into GitHub Actions here.
+# Covers both halves of the repo: the Python physics core (pulsed_ion_chamber/,
+# the `python` job below) and the web/ prototype (web/core's Rust crate + the
+# SvelteKit app in web/). The Python package is what every published number is
+# validated against, so its own test suite runs here too, not just locally.
 
 on:
   push:
@@ -19,6 +20,25 @@ permissions:
   contents: read
 
 jobs:
+  python:
+    name: Python (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install package with dev dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Test
+        run: pytest
+
   rust:
     name: Rust (fmt, clippy, test)
     runs-on: ubuntu-latest
