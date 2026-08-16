@@ -217,6 +217,17 @@ setting `chamber_fill_fraction=0.7`.
 the whole window; they are not clustered at its start. Defaults are 540 µs at
 50 Hz — a 2.7 % duty cycle.
 
+**Not Poisson-distributed.** `pulses._sample_pulse_arrival_histogram`'s
+cumulative-sum-of-uniforms construction measures var/mean = 0.378 on the
+AIC-144 `archive` tier — under-dispersed relative to a true Poisson process
+(1.0) or genuinely i.i.d. uniform arrivals (0.995) — and always places the
+last track's arrival at exactly `pulse_duration_s`. Since recombination is
+quadratic in local density, under-dispersed arrivals under-predict it
+slightly (~-8e-5 in `k_s` on the `archive` tier, comparable to ordinary seed
+scatter). Kept as-is rather than switched to an i.i.d.-uniform beam because
+every archived `k_s` value in `examples/ifj_aic144` is tied to its seed
+through this exact sequence (issue #19 P5).
+
 **Why the RF microstructure is averaged over, not resolved.** A cyclotron only
 extracts protons in RF buckets, so a 540 µs "pulse" is really ~14,000 bunches at
 ~26 MHz. The simulation's time step is fixed by numerical stability (§9) at a
@@ -295,7 +306,7 @@ constants:
 | D₊ | 0.037 cm²/s | 0.0282 cm²/s |
 | D₋ | 0.037 cm²/s | 0.0435 cm²/s |
 | α | 1.60 × 10⁻⁶ cm³/s | same |
-| W | 34.2 eV/ion pair (`W_eV`) | — |
+| W | 34.2 eV/ion pair (`W_eV`) | 33.0 eV/ion pair (`examples/ifj_aic144`) |
 
 **Single vs. two species.** By default both carriers share one averaged mobility
 and one averaged diffusion coefficient. Setting `mu_positive_cm2_Vs` and friends
@@ -314,11 +325,16 @@ are opposite by construction in the solver's z-stencil, so a negative value
 would flip the sign twice and send both species to the same electrode; the
 config rejects it.
 
-**W = 34.2 eV/ion pair** is the proton-specific value, and is used consistently
-by both the PDE solver and the analytic Jaffe reference in `theory.py`, so the
-single-track validation compares like with like. It is exposed as `W_eV` because
-published values differ (33–34 eV depending on particle and source) and it
-scales the charge per track linearly — and recombination quadratically.
+**W = 34.2 eV/ion pair** is the proton-specific default. It is exposed as
+`W_eV` because published values differ (33–34 eV depending on particle and
+source) and it scales the charge per track linearly — and recombination
+quadratically. `theory.jaffe_ks` defaults to the same module constant, but
+does *not* read a `SimulationConfig`'s `W_eV` automatically: pass
+`W_eV=config.W_eV` (and `mu=config.mu_positive`, `D=config.D_positive` for a
+two-species config) explicitly whenever the run being cross-checked overrode
+the default, e.g. `examples/ifj_aic144` (`W_eV=33.0`) — a config comparing an
+overridden run against a default-`W_eV` Jaffe reference is comparing loss
+figures roughly 7 % apart, not "like with like" (issue #19 P4).
 
 **`epsilon_r` does not appear** because space-charge screening is not modelled
 (§13): the field is the applied field, so the gas permittivity never enters.
@@ -408,8 +424,13 @@ accumulated over the same region, so `f` is a ratio of like quantities.
 
 - `"track_disc"` (default): voxels inside `sampled_radius_cm`, in the gap
   layers only — the disc the tracks were drawn in.
-- `"full_grid"`: every voxel in the gap, including the track-free buffer
-  annulus.
+- `"full_grid"`: every voxel the Lax-Wendroff sweep actually visits in the gap
+  (the interior `1 <= i,j <= no_xy-2`), including the track-free buffer
+  annulus. The never-swept outer ring is excluded from both the injected and
+  the recombined tally, since charge landing there can structurally never be
+  scored as recombined — counting it as injected without ever being able to
+  count it as recombined would bias `k_s` low again by construction (issue
+  #19 P2).
 
 **Why `track_disc` is the default.** The buffer annulus receives Gaussian tails
 but no track centres, so it is systematically under-irradiated relative to the
@@ -417,6 +438,14 @@ uniformly irradiated chamber being modelled. Including it dilutes the mean
 density and biases `k_s` low — measured, **0.8 %** on the `archive` tier, and
 that bias is buffer-converged rather than divergent. `full_grid` exists to
 reproduce external configurations that score this way.
+
+**Injected and recombined charge share one voxel set.** Deposition writes gap
+layers `k` in `[no_z_electrode, no_z_electrode + no_z)`; the sweep must score
+that same closed-open range (`no_z_electrode <= k < no_z_electrode + no_z`),
+not `no_z_electrode < k < no_z_electrode + no_z` — the latter silently drops
+the first gap layer from the recombined tally while still counting it as
+injected, integrating the numerator and denominator of `f` over different
+volumes (issue #19 P1).
 
 `k_s` is reported as **1/f** (the exact convention). The first-order
 approximation `1 + N_recombined/N_injected` agrees to 4 digits below ~1 %

@@ -28,7 +28,7 @@ struct Grid {
     no_z_with_buffer: usize,
     no_z: usize,
     no_z_electrode: usize,
-    mid_xy: i64,
+    mid_xy: f64,
     scoring_radius_sq: f64,
 }
 
@@ -103,7 +103,7 @@ fn broadcast_and_score(
     let k_lo = grid.no_z_electrode;
     let k_hi = grid.no_z_electrode + grid.no_z;
     for i in 0..grid.no_xy {
-        let di_sq = ((i as i64 - grid.mid_xy) as f64).powi(2);
+        let di_sq = (i as f64 - grid.mid_xy).powi(2);
         let row_base = i * grid.no_xy;
         for j in 0..grid.no_xy {
             let density = total_density[row_base + j];
@@ -117,7 +117,7 @@ fn broadcast_and_score(
                 *p += density;
                 *n += density;
             }
-            let dj_sq = ((j as i64 - grid.mid_xy) as f64).powi(2);
+            let dj_sq = (j as f64 - grid.mid_xy).powi(2);
             if di_sq + dj_sq < grid.scoring_radius_sq {
                 inserted += density * grid.no_z as f64;
             }
@@ -146,9 +146,9 @@ fn lax_wendroff_step(
     let mut total_negative = 0.0;
 
     for i in 1..grid.no_xy - 1 {
-        let di_sq = ((i as i64 - grid.mid_xy) as f64).powi(2);
+        let di_sq = (i as f64 - grid.mid_xy).powi(2);
         for j in 1..grid.no_xy - 1 {
-            let dj_sq = ((j as i64 - grid.mid_xy) as f64).powi(2);
+            let dj_sq = (j as f64 - grid.mid_xy).powi(2);
             let inside = di_sq + dj_sq < grid.scoring_radius_sq;
             for k in 1..grid.no_z_with_buffer - 1 {
                 let idx = grid.idx(i, j, k);
@@ -180,7 +180,11 @@ fn lax_wendroff_step(
                 positive_next[idx] = p_out;
                 negative_next[idx] = n_out;
 
-                if inside && k > grid.no_z_electrode && k < grid.no_z + grid.no_z_electrode {
+                // k == no_z_electrode is the *first* gap layer -- deposition
+                // writes it (k_lo == no_z_electrode in broadcast_and_score)
+                // and it must be scored too, or injected and recombined
+                // charge integrate different voxel sets (see issue #19 P1).
+                if inside && k >= grid.no_z_electrode && k < grid.no_z + grid.no_z_electrode {
                     recombined += recomb;
                     total_positive += p_out;
                     total_negative += n_out;

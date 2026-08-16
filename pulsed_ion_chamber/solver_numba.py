@@ -112,8 +112,16 @@ def _insert_track_numba(
                 positive_array[i, j, k] += ion_density
                 negative_array[i, j, k] += ion_density
             # Scored columns contribute no_z identical layers, hence the factor
-            # rather than a sum.
-            if di_sq + (j - mid_xy) ** 2 < scoring_radius_sq:
+            # rather than a sum. Restricted to the interior the Lax-Wendroff
+            # sweep actually visits (1 <= i,j <= no_xy-2): under "full_grid"
+            # scoring, scoring_radius_sq alone always passes, and without this
+            # bound the never-swept outer ring would be counted as injected
+            # charge that can structurally never recombine (see issue #19 P2).
+            if (
+                1 <= i <= no_xy - 2
+                and 1 <= j <= no_xy - 2
+                and di_sq + (j - mid_xy) ** 2 < scoring_radius_sq
+            ):
                 inserted += ion_density * no_z
 
     return inserted
@@ -193,7 +201,11 @@ def _lax_wendroff_step_numba(
                 positive_next[i, j, k] = p_out
                 negative_next[i, j, k] = n_out
 
-                if inside and no_z_electrode < k < (no_z + no_z_electrode):
+                # k == no_z_electrode is the *first* gap layer -- deposition
+                # writes it (k_lo == no_z_electrode) and it must be scored too,
+                # or injected and recombined charge integrate different voxel
+                # sets (see issue #19 P1).
+                if inside and no_z_electrode <= k < (no_z + no_z_electrode):
                     recombined += recomb
                     total_positive += p_out
                     total_negative += n_out
@@ -212,9 +224,13 @@ def warmup() -> None:
     """
     shape = (4, 4, 4)
     p, n, p_next, n_next = (np.zeros(shape) for _ in range(4))
-    _insert_track_numba(p, n, 2.0, 2.0, 4, 1, 1, 1.0, 1.0, 1.0, 2, 1.0, 4.0)
+    # mid_xy (the 2.0 here) is a float in production (config.py anchors it to
+    # outer_radius = no_xy / 2.0, see issue #19 P6) -- matching that type here
+    # is what makes this a real warmup rather than pre-compiling a
+    # specialization run_simulation_numba never actually calls.
+    _insert_track_numba(p, n, 2.0, 2.0, 4, 1, 1, 1.0, 1.0, 1.0, 2.0, 1.0, 4.0)
     _lax_wendroff_step_numba(
-        p, n, p_next, n_next, 4, 4, 1, 1, 2, 1.0, 0.01, 0.01, 0.01, 0.97, 0.01, 0.01, 0.01, 0.97, 1e-9
+        p, n, p_next, n_next, 4, 4, 1, 1, 2.0, 1.0, 0.01, 0.01, 0.01, 0.97, 0.01, 0.01, 0.01, 0.97, 1e-9
     )
 
 
@@ -341,7 +357,12 @@ def run_simulation_numba(
             break
 
     time_s: FloatArray1D = (np.arange(config.total_time_steps) + 1) * config.dt
-    ks = 1.0 / f_t[-1]
+    # f_t is initialised to all-ones, so a run stopped early by max_wall_s
+    # would otherwise report ks = 1.0 -- a physically meaningful-looking "no
+    # recombination at all" for a run that never got far enough to say that.
+    # NaN makes the truncation impossible to miss (see issue #19 P7).
+    truncated = max_wall_s is not None and steps_completed < config.total_time_steps
+    ks = float("nan") if truncated else 1.0 / f_t[-1]
     result = diagnostics.build_result(config, time_s, f_t, ks, positive_array, negative_array)
     if max_wall_s is not None:
         result.steps_completed = steps_completed
