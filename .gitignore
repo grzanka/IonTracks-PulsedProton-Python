@@ -8,9 +8,13 @@ __pycache__/
 
 # Virtual environments
 .venv/
+.venv-gpu/
 venv/
 env/
 ENV/
+
+# Local HPC environment bootstrap (module loads + venv activation; site-specific)
+gpu_env.sh
 
 # Packaging / build artifacts
 *.egg-info/
@@ -39,3 +43,5 @@ htmlcov/
 # Scaling-study job logs: per-run JSON is the result and is committed, the
 # Slurm stdout beside it is not.
 profiling/data/helios_scaling/logs/
+# GPU benchmark: JSON results are committed, the run logs beside them are not.
+profiling/data/gpu_athena/*.log

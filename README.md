@@ -77,6 +77,7 @@ Index: [`docs/README.md`](docs/README.md) — what each document answers.
 | [`docs/PHYSICS.md`](docs/PHYSICS.md) | Every physical and numerical assumption, and why it is made. **Start here** for what is modelled. |
 | [`docs/ALGORITHM.md`](docs/ALGORITHM.md) | Data layout, the two hot loops, what batching means, where the parallelism is. **Start here** for how. |
 | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) | Cost model, measured timings, scaling, using many cores. |
+| [`docs/GPU.md`](docs/GPU.md) | The CUDA backend: setup, when the GPU wins, and the 5 µm full electrode in 156 s on an A100. |
 | [`docs/BENCHMARKS-LAPTOP.md`](docs/BENCHMARKS-LAPTOP.md) | Measured wall times on a laptop, and why one thread is the right number there. |
 | [`docs/HELIOS.md`](docs/HELIOS.md) | Running on a Cyfronet Helios node: setup, how many cores to ask for, what to expect. |
 | [`docs/BENCHMARKS-ARES.md`](docs/BENCHMARKS-ARES.md) | The same on Cyfronet Ares — and why its cores lose to Helios's by 1.7× despite a higher clock. |
@@ -97,7 +98,10 @@ Two results worth knowing before trusting a number:
   loops are memory-bandwidth-bound. A small grid is already saturated on one
   core and gets slower with more; a grid larger than the machine's L3 scales
   well — the full electrode is 572 s on one Helios core and 47 s on 32, same
-  `k_s` to six digits. `docs/PERFORMANCE.md` §6, `docs/HELIOS.md`.
+  `k_s` to six digits. `docs/PERFORMANCE.md` §6, `docs/HELIOS.md`. The same
+  logic taken to its limit is the GPU: on an A100 the full electrode is 15×
+  faster than 32 CPU cores, and the 5 µm full electrode (466 M voxels, too large
+  for any CPU cache) runs in 156 s. `docs/GPU.md`.
 
 ## Provenance and scope
 

@@ -21,6 +21,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest"]
 profiling = ["py-spy"]
+# GPU backend (pulsed_ion_chamber.solver_cuda). cupy-cuda12x is a pre-built
+# wheel that bundles its own CUDA runtime; it needs an NVIDIA GPU and driver.
+# Pick the wheel that matches your CUDA major version (…-cuda11x / …-cuda12x).
+# See docs/GPU.md.
+gpu = ["cupy-cuda12x"]
 
 [tool.setuptools.packages.find]
 include = ["pulsed_ion_chamber*"]

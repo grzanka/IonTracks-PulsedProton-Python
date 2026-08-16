@@ -10,9 +10,12 @@ docs/PHYSICS.md for what every assumption means and why, and
 docs/PERFORMANCE.md for timings and scaling.
 
 Run:  python examples/ifj_aic144/run_markus_2mm.py [tier] [--threads N]
-            [--backend auto|serial|batched] [--dose-rate-water-Gy-s R] [--json FILE]
+            [--backend auto|serial|batched|cuda] [--dose-rate-water-Gy-s R] [--json FILE]
             [--save-run DIR] [--sampled-radius-mm R] [--dry-run]
             [--estimate-runtime-seconds N]
+
+`--backend cuda` runs the GPU backend (docs/GPU.md), which needs CuPy and an
+NVIDIA GPU and wins on grids too large for a CPU's cache.
 
 `--save-run DIR` writes the full per-time-step record (CSV, track-density
 map, and the config scalars a plot needs) to DIR. This script never plots --
@@ -197,21 +200,25 @@ def main(
     config = build_config(tier, dose_rate_water_Gy_s, sampled_radius_cm)
     # "auto": one thread keeps the unbatched backend, so a plain run reproduces
     # the tier table; more than one needs the batched backend, the only one
-    # where a thread count means anything.
+    # where a thread count means anything. "cuda" is the GPU backend
+    # (docs/GPU.md), where --threads is irrelevant.
     #
     # The override matters for one real case: a single-core *baseline* for a
     # large tier. `full_electrode` on the unbatched backend would deposit
     # m * w^2 * no_z per step and take hours, so the 572 s reference figure is
     # the batched backend at `--threads 1`, not the unbatched one. Comparing
     # thread counts means holding the backend fixed.
-    batched = threads != 1 if backend == "auto" else backend == "batched"
+    resolved = ("batched" if threads != 1 else "serial") if backend == "auto" else backend
+    batched = resolved == "batched"
+    use_cuda = resolved == "cuda"
     print(
         f"=== IFJ AIC-144, Markus 2 mm, macropulse, {dose_rate_water_Gy_s:g} Gy/s to water"
         f" -- '{tier}' grid ==="
     )
     print(config.summary())
-    backend = "solver_numba_parallel" if batched else "solver_numba"
-    print(f"Backend               : {backend}, {threads} thread(s)")
+    backend = {"serial": "solver_numba", "batched": "solver_numba_parallel", "cuda": "solver_cuda"}[resolved]
+    threads_note = "GPU" if use_cuda else f"{threads} thread(s)"
+    print(f"Backend               : {backend}, {threads_note}")
     print()
 
     if dry_run:
@@ -225,6 +232,13 @@ def main(
         print("--- dry run: memory ---")
         print(memory_report(config.estimated_memory_bytes, config.memory_budget_fraction))
         print("\nNo simulation was run (--dry-run).")
+        return
+
+    if estimate_runtime_seconds is not None and use_cuda:
+        # The empirical estimator only knows the two CPU backends. The GPU
+        # backend is fast enough on the example's tiers that there is nothing to
+        # estimate -- just run it.
+        print("--estimate-runtime-seconds is not supported for --backend cuda; run the case directly.")
         return
 
     if estimate_runtime_seconds is not None:
@@ -259,7 +273,15 @@ def main(
         print("\nNo full run was performed (--estimate-runtime-seconds).")
         return
 
-    if batched:
+    if use_cuda:
+        # Imported here, not at module top, so the example still runs on a
+        # CPU-only machine as long as --backend cuda is not selected.
+        from pulsed_ion_chamber.solver_cuda import run_simulation_cuda, warmup_cuda
+
+        warmup_cuda()  # one-off kernel compile, excluded from the timing below
+        t0 = time.perf_counter()
+        result = run_simulation_cuda(config, progress=True)
+    elif batched:
         warmup_parallel()
         t0 = time.perf_counter()
         result = run_simulation_numba_parallel(config, progress=True, num_threads=threads)
@@ -276,7 +298,7 @@ def main(
 
     radius_um = config.sampled_radius_cm * 1e4
     corrected = result.ks + EDGE_DEFICIT_UM / radius_um
-    print(f"\nWall time ({backend}, {threads} thread(s)): {elapsed_s:.1f} s")
+    print(f"\nWall time ({backend}, {threads_note}): {elapsed_s:.1f} s")
     # ru_maxrss is KiB on Linux, bytes on macOS -- this repo's benchmarking is
     # Linux-only (bench_laptop.sh, submit.sh both require it), so KiB is what
     # this number will be in practice; noted rather than special-cased.
@@ -374,8 +396,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--backend",
         default="auto",
-        choices=("auto", "serial", "batched"),
-        help="auto (default) picks by thread count; force 'batched' for a single-core baseline",
+        choices=("auto", "serial", "batched", "cuda"),
+        help="auto (default) picks by thread count; 'batched' for a single-core baseline; "
+        "'cuda' runs on the GPU (docs/GPU.md)",
     )
     sizing = parser.add_mutually_exclusive_group()
     sizing.add_argument(
