@@ -85,7 +85,15 @@ async function run(request: MainToWorkerMessage & { type: "start" }): Promise<vo
   if (chunk.timeS.length > 0) {
     post({ type: "progress", chunk, stepIndex: sim.step_index(), totalSteps, ks: sim.ks() });
   }
-  post({ type: "done", ks: sim.ks(), stepsCompleted: sim.step_index() });
+  post({
+    type: "done",
+    ks: sim.ks(),
+    stepsCompleted: sim.step_index(),
+    // Read once, here, rather than streamed -- see protocol.ts's doc
+    // comment on "done" (issue #6 milestone 5).
+    trackDensityXy: Array.from(sim.track_density_xy()),
+    noXy: sizing.noXy,
+  });
 }
 
 /// Runs the *real* backend on the *real* grid for a bounded wall-clock

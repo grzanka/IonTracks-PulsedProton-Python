@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import LinePlot from "$lib/components/LinePlot.svelte";
+  import TrackDensityPlot from "$lib/components/TrackDensityPlot.svelte";
   import UnitField from "$lib/components/UnitField.svelte";
   import { estimate, loadWasm, type Estimate, type SimParams } from "$lib/wasm-core/loader";
   import { SimulationController } from "$lib/sim/controller";
@@ -57,11 +58,30 @@
   let totalSteps = $state(0);
   let runningKs = $state(1);
   let finalKs = $state<number | undefined>(undefined);
+  // Read once at run completion, not streamed -- see protocol.ts's "done"
+  // doc comment (issue #6 milestone 5).
+  let trackDensityXy: number[] = $state([]);
+  let densityNoXy = $state(0);
 
   let timeUs: number[] = $state([]);
   let nPositive: number[] = $state([]);
   let nNegative: number[] = $state([]);
   let recombined: number[] = $state([]);
+  // Injected charge, converted to a rate (ion pairs / us) same as
+  // pulsed_ion_chamber.plots' injection-rate figure -- dividing by dt here
+  // (once per point, as each chunk arrives) rather than at draw time keeps
+  // LinePlot's valueDivisor purely an SI-prefix scale, matching how the
+  // other two plots use it (issue #6 milestone 3: this prototype originally
+  // shipped without an injection-rate plot at all).
+  let injectedRate: number[] = $state([]);
+  let runDtUs = $state(1); // set from sizing.dtNs at startRun(); >0 always
+  // Also captured once at startRun(), for the track-density cross-section
+  // view (issue #6 milestone 5) -- config fields aren't editable while a
+  // run is in progress, but capturing keeps this view's inputs pinned to
+  // the run that produced the data regardless.
+  let runUnitLengthCm = $state(0);
+  let runInnerRadiusVoxels = $state(0);
+  let runSampledRadiusCm = $state(0); // for the k_inf extrapolation panel below
   // Running peaks, updated incrementally in onProgress below (each new
   // chunk's own few points, not a rescan of the whole series) rather than
   // recomputed from siScale([...nPositive, ...nNegative]) on every chunk --
@@ -69,6 +89,7 @@
   // grew with the run itself instead of staying flat (issue #19 W7).
   let carrierPeak = $state(0);
   let recombinedPeak = $state(0);
+  let injectedRatePeak = $state(0);
 
   const controller = new SimulationController();
 
@@ -170,12 +191,25 @@
     totalSteps = sizing.totalTimeSteps;
     runningKs = 1;
     finalKs = undefined;
+    trackDensityXy = [];
+    densityNoXy = 0;
     timeUs = [];
     nPositive = [];
     nNegative = [];
     recombined = [];
+    injectedRate = [];
     carrierPeak = 0;
     recombinedPeak = 0;
+    injectedRatePeak = 0;
+    runDtUs = sizing.dtNs / 1000;
+    runUnitLengthCm = gridSizeUm * 1e-4;
+    runInnerRadiusVoxels = sizing.innerRadiusVoxels;
+    runSampledRadiusCm = sampledRadiusCm;
+    extrapolationState = "idle";
+    extrapolationSecondRadiusCm = Math.min(sampledRadiusCm * 1.5, 1.0);
+    extrapolationKInfinity = undefined;
+    extrapolationA = undefined;
+    extrapolationSecondKs = undefined;
 
     // A fresh, unexposed seed per run: statistical noise between runs of the
     // same config is real physics (docs/PHYSICS.md sec. 14), not something
@@ -200,11 +234,18 @@
           recombined.push(v);
           if (v > recombinedPeak) recombinedPeak = v;
         }
+        for (const v of chunk.injected) {
+          const rate = v / runDtUs;
+          injectedRate.push(rate);
+          if (rate > injectedRatePeak) injectedRatePeak = rate;
+        }
         stepIndex = step;
         totalSteps = total;
         runningKs = ks;
       },
-      onDone: (ks) => {
+      onDone: (ks, _stepsCompleted, densityXy, noXy) => {
+        trackDensityXy = densityXy;
+        densityNoXy = noXy;
         phase = "done";
         finalKs = ks;
       },
@@ -227,8 +268,97 @@
     phase = "setup";
   }
 
+  // --- k_inf (infinite-column) extrapolation, docs/PHYSICS.md sec. 14 ---
+  // (issue #6 sec. 1/milestone 5: "why is my radius capped" answered as a
+  // feature, not just a limit). k_s(r) = k_inf - A/r is fit from the
+  // finished run above (r1, k1) plus one more run at a second radius
+  // (r2, k2), both solved from those two points -- not streamed live like
+  // the run itself, since it's two closed-form numbers from two already-
+  // computed k_s values.
+  type ExtrapolationState = "idle" | "running" | "done" | "error";
+  let extrapolationState = $state<ExtrapolationState>("idle");
+  let extrapolationSecondRadiusCm = $state(0.012);
+  let extrapolationSecondRadiusInvalid = $state(false);
+  let extrapolationSecondKs = $state<number | undefined>(undefined);
+  let extrapolationKInfinity = $state<number | undefined>(undefined);
+  let extrapolationA = $state<number | undefined>(undefined);
+  let extrapolationError = $state("");
+
+  /** Solves k_s(r) = k_inf - A/r for (k_inf, A) given two (radius, k_s)
+   * points. Undefined if the two radii coincide (the system is singular). */
+  function fitKInfinity(
+    r1Cm: number,
+    k1: number,
+    r2Cm: number,
+    k2: number,
+  ): { kInfinity: number; aCm: number } | undefined {
+    if (r1Cm === r2Cm) return undefined;
+    const invR1 = 1 / r1Cm;
+    const invR2 = 1 / r2Cm;
+    const aCm = (k2 - k1) / (invR1 - invR2);
+    return { kInfinity: k1 + aCm * invR1, aCm };
+  }
+
+  function runExtrapolation(): void {
+    if (
+      phase !== "done" ||
+      finalKs === undefined ||
+      extrapolationSecondRadiusInvalid ||
+      extrapolationState === "running"
+    ) {
+      return;
+    }
+    extrapolationState = "running";
+    extrapolationError = "";
+    extrapolationKInfinity = undefined;
+    extrapolationA = undefined;
+    const firstKs = finalKs; // narrowed here; the callback below closes over the reactive (possibly-undefined) binding otherwise
+    const secondParams: SimParams = {
+      ...currentParams(),
+      sampledRadiusCm: extrapolationSecondRadiusCm,
+    };
+    const secondSizing = estimate(secondParams);
+    if (!secondSizing.ok) {
+      extrapolationState = "error";
+      extrapolationError = secondSizing.error ?? "Configuration rejected.";
+      return;
+    }
+    const seed = Math.floor(Math.random() * 1_000_000_000);
+    // A separate, short-lived run through the same controller -- it only
+    // reuses the primary run's finished (r1, k1), never its live state
+    // (timeUs, phase, ...), so the plots above stay exactly as the primary
+    // run left them while this one computes in the background.
+    controller.start(secondParams, seed, {
+      onInvalid: (error) => {
+        extrapolationState = "error";
+        extrapolationError = error;
+      },
+      onProgress: () => {},
+      onDone: (ks2) => {
+        extrapolationSecondKs = ks2;
+        const fit = fitKInfinity(runSampledRadiusCm, firstKs, extrapolationSecondRadiusCm, ks2);
+        if (fit) {
+          extrapolationKInfinity = fit.kInfinity;
+          extrapolationA = fit.aCm * 1e4; // cm -> um, matching docs/PHYSICS.md sec. 14's units
+          extrapolationState = "done";
+        } else {
+          extrapolationState = "error";
+          extrapolationError = "Second radius must differ from the first.";
+        }
+      },
+      onCancelled: () => {
+        extrapolationState = "idle";
+      },
+      onError: (message) => {
+        extrapolationState = "error";
+        extrapolationError = message;
+      },
+    });
+  }
+
   let carrierScale = $derived(scaleForPeak(carrierPeak));
   let recombinedScale = $derived(scaleForPeak(recombinedPeak));
+  let injectedScale = $derived(scaleForPeak(injectedRatePeak));
   let progressPct = $derived(totalSteps > 0 ? Math.min(100, (100 * stepIndex) / totalSteps) : 0);
 </script>
 
@@ -428,15 +558,85 @@
         <p class="k-s-live">k<sub>s</sub> so far: {runningKs.toFixed(4)}</p>
       {:else if phase === "done" && finalKs !== undefined}
         <p class="k-s-final">Final k<sub>s</sub> = {finalKs.toFixed(6)}</p>
+
+        <div class="extrapolation">
+          <h3>Extrapolate to an infinite column</h3>
+          <p class="extrapolation-hint">
+            k<sub>s</sub> rises with the sampled column radius and never fully converges within this
+            prototype's browser-safe caps (<a
+              href="https://github.com/grzanka/IonTracks-PulsedProton-Python/blob/master/docs/PHYSICS.md#14-known-systematics-and-convergence"
+              target="_blank"
+              rel="noreferrer">docs/PHYSICS.md §14</a
+            >). The shortfall falls as 1/r, so two runs at different radii are enough to fit k<sub
+              >∞</sub
+            >
+            (the disc, not the ring) without paying for a larger grid.
+          </p>
+          <div class="extrapolation-row">
+            <UnitField
+              label="Second radius"
+              units={RADIUS_LENGTH_UNITS}
+              defaultUnitSymbol="mm"
+              bind:value={extrapolationSecondRadiusCm}
+              bind:invalid={extrapolationSecondRadiusInvalid}
+              min={1e-4}
+              max={1.0}
+            />
+            <button
+              type="button"
+              onclick={runExtrapolation}
+              disabled={extrapolationState === "running" || extrapolationSecondRadiusInvalid}
+            >
+              {extrapolationState === "running" ? "Running second radius…" : "Run & extrapolate"}
+            </button>
+          </div>
+          {#if extrapolationState === "error"}
+            <p class="error-note">{extrapolationError}</p>
+          {:else if extrapolationState === "done" && extrapolationKInfinity !== undefined && extrapolationA !== undefined}
+            <dl class="estimate">
+              <div>
+                <dt>r₁, k<sub>s</sub>(r₁)</dt>
+                <dd>
+                  {(runSampledRadiusCm * 1e4).toFixed(0)} µm, {finalKs.toFixed(6)}
+                </dd>
+              </div>
+              <div>
+                <dt>r₂, k<sub>s</sub>(r₂)</dt>
+                <dd>
+                  {(extrapolationSecondRadiusCm * 1e4).toFixed(0)} µm, {extrapolationSecondKs?.toFixed(
+                    6,
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>k<sub>∞</sub> = k<sub>s</sub>(r) + A/r</dt>
+                <dd>{extrapolationKInfinity.toFixed(6)}</dd>
+              </div>
+              <div>
+                <dt>A</dt>
+                <dd>{extrapolationA.toFixed(3)} µm</dd>
+              </div>
+            </dl>
+          {/if}
+        </div>
       {:else if phase === "error"}
         <p class="error-note">{errorMessage}</p>
       {/if}
 
       <div class="plots">
         <LinePlot
+          title="Injection rate"
+          xValues={timeUs}
+          valueDivisor={injectedScale.divisor}
+          valueMax={injectedRatePeak}
+          yLabel={`injection rate [${injectedScale.prefix}ion pairs / µs]`}
+          series={[{ label: "injected", color: "#0891b2", values: injectedRate }]}
+        />
+        <LinePlot
           title="Charge-carrier evolution"
           xValues={timeUs}
           valueDivisor={carrierScale.divisor}
+          valueMax={carrierPeak}
           yLabel={`carriers present [${carrierScale.prefix}ion pairs]`}
           series={[
             { label: "positive", color: "#2563eb", values: nPositive },
@@ -447,9 +647,22 @@
           title="Recombination rate"
           xValues={timeUs}
           valueDivisor={recombinedScale.divisor}
+          valueMax={recombinedPeak}
           yLabel={`recombination [${recombinedScale.prefix}ion pairs / step]`}
           series={[{ label: "recombined", color: "#b91c1c", values: recombined }]}
         />
+        {#if phase === "done" && trackDensityXy.length > 0}
+          <!-- A full 2D field, not a scalar time series -- rendered once at
+               completion, not streamed with the three plots above (issue #6
+               milestone 5, see protocol.ts's "done" doc comment). -->
+          <TrackDensityPlot
+            title="Track areal density cross-section"
+            density={trackDensityXy}
+            noXy={densityNoXy}
+            unitLengthCm={runUnitLengthCm}
+            innerRadiusVoxels={runInnerRadiusVoxels}
+          />
+        {/if}
       </div>
     </section>
   {/if}
@@ -564,6 +777,38 @@
   .ok-note {
     color: #15803d;
     font-size: 0.85rem;
+  }
+
+  .extrapolation {
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px dashed #e2e8f0;
+  }
+
+  .extrapolation h3 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #64748b;
+    margin: 0 0 0.4rem;
+  }
+
+  .extrapolation-hint {
+    font-size: 0.82rem;
+    color: #475569;
+    line-height: 1.4;
+    margin: 0 0 0.6rem;
+  }
+
+  .extrapolation-hint a {
+    color: #2563eb;
+  }
+
+  .extrapolation-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.75rem;
+    margin-bottom: 0.6rem;
   }
 
   .error-note {

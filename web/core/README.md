@@ -34,9 +34,10 @@ voxels`, not raw grid size; see that constant's doc comment for why and
   offers an on-device empirical measurement (run the real backend for a few
   seconds, extrapolate) alongside the instant analytical guess -- the wasm
   analogue of `benchmark.estimate_full_runtime_empirical`.
-- The track-density cross-section (a full 2D field) isn't scored -- only the
-  four scalar time series (`n+`, `n-`, `injected`, `recombination`) the
-  browser's live plots need.
+- The track-density cross-section (`solver::Simulation::track_density_xy`, a
+  full `no_xy * no_xy` field) is accumulated but read only once, at run
+  completion -- not streamed every ~150 ms like the four scalar time series
+  (`n+`, `n-`, `injected`, `recombination`) the browser's live plots need.
 
 ## Validation
 

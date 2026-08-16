@@ -33,8 +33,16 @@ costs:
    (`docs/PHYSICS.md` sec. 14), not something to hide behind a fixed default.
 2. **Run.** Only once you click "Run simulation" does anything execute. It
    runs in a Web Worker (so the page stays responsive and Cancel actually
-   works), streaming the carrier-evolution and recombination-rate plots back
-   every ~150 ms of wall time as the run progresses.
+   works), streaming the injection-rate, carrier-evolution and
+   recombination-rate plots back every ~150 ms of wall time as the run
+   progresses. The track-density cross-section -- a full 2D field, not a
+   scalar time series -- renders once, at completion.
+3. **Extrapolate (optional).** `k_s` never fully converges within this
+   prototype's capped column radius; once a run finishes, "Extrapolate to an
+   infinite column" runs one more (short) simulation at a second radius and
+   fits `k_∞` from the two, per `docs/PHYSICS.md` sec. 14's `1/r` law -- so
+   the radius cap becomes a documented feature to correct for, not a silent
+   limitation.
 
 ## Local development
 

@@ -16,9 +16,11 @@
 //!   per issue #6 sec. 6. `grid_size_um` *is* adjustable (see below); the
 //!   others stayed fixed because they're numerical margin, not something a
 //!   user has physical intuition for.
-//! - The track-density cross-section (a full 2D field) is not scored; only
-//!   the four scalar time series (`n+`, `n-`, `injected`, `recombination`)
-//!   this prototype's live plots need.
+//! - The track-density cross-section (a full 2D field, `no_xy * no_xy`) is
+//!   accumulated (`solver::Simulation::track_density_xy`) and read once, at
+//!   run completion -- unlike the four scalar time series (`n+`, `n-`,
+//!   `injected`, `recombination`), which are streamed live, it is not worth
+//!   sending every ~150 ms flush (issue #6 milestone 5).
 //!
 //! Adjustable: beam energy, voltage, electrode gap, dose rate, pulse
 //! duration, the sampled column radius, and the grid spacing (`grid_size_um`)
@@ -93,6 +95,11 @@ pub struct Estimate {
     pub dt_ns: f64,
     pub let_kev_um: f64,
     pub track_radius_um: f64,
+    /// Scored-disc radius, in voxels -- what the track-density
+    /// cross-section view draws its overlay circle at (issue #6 milestone
+    /// 5). `sampling_radius` is not exposed separately: this crate fixes
+    /// `chamber_fill_fraction` at 1.0, so it always equals `inner_radius`.
+    pub inner_radius_voxels: f64,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -152,6 +159,7 @@ pub fn estimate(
             dt_ns: c.dt * 1e9,
             let_kev_um: c.let_kev_um,
             track_radius_um: c.track_radius_cm * 1e4,
+            inner_radius_voxels: c.inner_radius,
         },
         Err(e) => Estimate {
             ok: false,
@@ -165,6 +173,7 @@ pub fn estimate(
             dt_ns: 0.0,
             let_kev_um: 0.0,
             track_radius_um: 0.0,
+            inner_radius_voxels: 0.0,
         },
     }
 }
@@ -293,5 +302,16 @@ impl WasmSimulation {
 
     pub fn ks(&self) -> f64 {
         self.inner.as_ref().map(|s| s.ks()).unwrap_or(1.0)
+    }
+
+    /// Track-centre counts per voxel column, `no_xy * no_xy` flattened
+    /// row-major -- what the track-density cross-section view draws (issue
+    /// #6 milestone 5). Meant to be read once, at run completion; empty if
+    /// construction failed.
+    pub fn track_density_xy(&self) -> Vec<f64> {
+        self.inner
+            .as_ref()
+            .map(|s| s.track_density_xy())
+            .unwrap_or_default()
     }
 }

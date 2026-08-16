@@ -259,6 +259,13 @@ pub struct Simulation {
     // The step's batched 2D density, before broadcast_and_score spreads it
     // down z -- see the module docs on why this crate batches deposition.
     total_density_scratch: Vec<f64>,
+    // Track-centre counts per (i, j) column, accumulated over the whole run
+    // -- the field `pulsed_ion_chamber.plots`' cross-section figure draws.
+    // Ports `pulsed_ion_chamber/state.py`'s `Diagnostics.count_track`
+    // (issue #6 milestone 5: the original port of this crate left this
+    // field out, scoring only the four scalar time series). `no_xy * no_xy`
+    // flat, row-major to match `Grid::idx`'s (i, j, k) layout at k = 0.
+    track_density_xy: Vec<f64>,
     step_index: i64,
     no_initialised: f64,
     no_recombined: f64,
@@ -306,6 +313,7 @@ impl Simulation {
             gauss_i_scratch: Vec::with_capacity(scratch_capacity),
             gauss_j_scratch: Vec::with_capacity(scratch_capacity),
             total_density_scratch: vec![0.0; no_xy * no_xy],
+            track_density_xy: vec![0.0; no_xy * no_xy],
             step_index: 0,
             no_initialised: 0.0,
             no_recombined: 0.0,
@@ -349,6 +357,16 @@ impl Simulation {
                     self.config.inner_radius_sq,
                     self.config.no_xy,
                 );
+                // `x, y` are fractional voxel coordinates in [0, no_xy); a
+                // centre lands in the voxel whose lower corner it falls in,
+                // same truncation `int(x)` uses in state.py's
+                // count_track -- `as usize` on a non-negative f64 truncates
+                // the same way. Clamped defensively since x/y can equal
+                // no_xy exactly at the float boundary of rng.random()'s
+                // [0, 1) range times no_xy.
+                let ix = (x as usize).min(self.grid.no_xy - 1);
+                let iy = (y as usize).min(self.grid.no_xy - 1);
+                self.track_density_xy[ix * self.grid.no_xy + iy] += 1.0;
                 accumulate_track_2d(
                     &self.grid,
                     &mut self.total_density_scratch,
@@ -417,6 +435,16 @@ impl Simulation {
 
     pub fn ks(&self) -> f64 {
         1.0 / self.f_t()
+    }
+
+    /// Track-centre counts per `(i, j)` voxel column, flattened row-major
+    /// (`no_xy * no_xy`), accumulated over the whole run so far. Cloned once
+    /// per call rather than borrowed -- this is only ever read at run
+    /// completion (issue #6 sec. 4: the field is a full 2D snapshot, not
+    /// worth streaming at the ~150 ms live-plot cadence), so the clone cost
+    /// is paid once, not per step.
+    pub fn track_density_xy(&self) -> Vec<f64> {
+        self.track_density_xy.clone()
     }
 
     #[cfg(test)]
@@ -512,5 +540,56 @@ mod tests {
             "ks={} (expected 1.058639, seed=1 deterministic)",
             sim.ks()
         );
+    }
+
+    #[test]
+    fn track_density_xy_counts_every_track_inside_the_sampling_disc() {
+        // Mirrors tests/test_output_and_diagnostics.py's
+        // test_all_track_centres_are_counted_inside_the_sampling_disc.
+        // "dev" tier (thousands of tracks/pulse), not single_track_params
+        // (exactly 1 track) -- exercises the counting logic over many draws.
+        let params = Params {
+            e_mev_u: 56.2,
+            voltage_v: 300.0,
+            electrode_gap_cm: 0.2,
+            dose_rate_gy_s: 8.91,
+            pulse_duration_s: 540e-6,
+            sampled_radius_cm: 0.003,
+            grid_size_um: 10.0,
+            seed: 1,
+        };
+        let config = Config::build(params).unwrap();
+        let no_xy = config.no_xy as usize;
+        let mid_xy = config.mid_xy;
+        let inner_radius = config.inner_radius;
+        let mut sim = Simulation::new(config);
+        sim.run_to_completion();
+
+        let density = sim.track_density_xy();
+        assert_eq!(density.len(), no_xy * no_xy);
+        let total: f64 = density.iter().sum();
+        assert_eq!(
+            total, sim.config.number_of_tracks_per_pulse as f64,
+            "counted {total} track centres, config drew {}",
+            sim.config.number_of_tracks_per_pulse
+        );
+
+        // A centre lands in the voxel whose lower corner it falls in, so
+        // allow one voxel of slack past inner_radius (same tolerance the
+        // Python test uses).
+        for i in 0..no_xy {
+            for j in 0..no_xy {
+                if density[i * no_xy + j] == 0.0 {
+                    continue;
+                }
+                let di = i as f64 - mid_xy;
+                let dj = j as f64 - mid_xy;
+                let r = (di * di + dj * dj).sqrt();
+                assert!(
+                    r <= inner_radius + std::f64::consts::SQRT_2,
+                    "track counted at ({i}, {j}), r={r}, inner_radius={inner_radius}"
+                );
+            }
+        }
     }
 }
