@@ -3,9 +3,27 @@ xy position) each ion track is injected into the grid.
 
 Track arrival times within a pulse are spread out using the same
 cumulative-sum-of-uniforms trick as hadrons/*/continuous_beam.py* (an easy
-way to get an increasing, roughly-Poisson-like sequence of arrival times
-without rejection sampling in time); xy positions are rejection-sampled
-uniformly inside the sampled cylinder, exactly as in the original code.
+way to get an increasing sequence of arrival times without rejection sampling
+in time); xy positions are rejection-sampled uniformly inside the sampled
+cylinder, exactly as in the original code.
+
+The arrival-time sequence is deliberately *not* Poisson-like, despite an
+earlier version of this docstring's claim to the contrary: measured on the
+AIC-144 `archive` tier (22 837 tracks into 1412 bins), the cumsum-of-uniforms
+construction gives var/mean = 0.378 against 1.0 for a true Poisson process (or
+0.995 for genuinely i.i.d. uniform arrival times) -- the rescale by
+``summed[-1]`` (see ``_sample_pulse_arrival_histogram``) actively suppresses
+bin-to-bin variance relative to either. It also pins the last arrival to
+exactly ``pulse_duration_s``, so a single-track run always injects on the
+final pulse step. Because recombination is quadratic in density
+(``alpha * n+ * n-``), under-dispersed arrivals under-predict it slightly --
+measured at roughly -8e-5 in `k_s` on the `archive` tier, comparable to
+ordinary seed-to-seed scatter and not corrected for here (issue #19 P5). An
+i.i.d.-uniform beam (``rng.multinomial(n_tracks, uniform_bin_probabilities)``,
+no more expensive) would remove the effect but was deliberately not adopted:
+every archived `k_s` value in `examples/ifj_aic144` is tied to its seed
+through the exact sequence this function draws, and changing the algorithm
+would move all of them silently.
 
 Note this spreads tracks pseudo-uniformly across the *whole* pulse, not at
 exact accelerator-RF-bucket times (e.g. a cyclotron's ~10-100 MHz
