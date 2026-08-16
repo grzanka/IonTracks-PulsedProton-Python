@@ -130,3 +130,90 @@ def test_warmup_cuda_does_not_hang_or_raise():
     from pulsed_ion_chamber.solver_cuda import warmup_cuda
 
     warmup_cuda()
+
+
+# --- unified memory, block size, truncation (the GH200 work) -----------------
+# docs/BENCHMARKS-HELIOS-GH200.md. The allocator must be invisible to the
+# physics: these check that claim on the same small config the rest of the
+# module uses, so a regression in the managed/host paths fails here and not
+# only on a 200 GiB grid nobody runs in CI.
+
+
+@pytest.mark.parametrize("memory,advise", [("device", "device"), ("managed", "device"), ("managed", "none")])
+def test_memory_modes_agree_with_device_memory(memory, advise):
+    """cudaMalloc, cudaMallocManaged and the placement hints are an allocation
+    detail; k_s and the density field must not notice."""
+    from pulsed_ion_chamber.solver_cuda import run_simulation_cuda
+
+    reference = run_simulation_cuda(_fast_config(), progress=False, memory="device")
+    other = run_simulation_cuda(_fast_config(), progress=False, memory=memory, advise=advise)
+    assert other.ks == pytest.approx(reference.ks, rel=RTOL)
+    np.testing.assert_allclose(other.positive_array, reference.positive_array, atol=reference.positive_array.max() * RTOL)
+
+
+def test_host_shared_memory_agrees_or_is_refused():
+    """memory="host" needs a GPU that walks the host page tables (GH200). Where
+    it does, the answer is identical; where it does not, the refusal must be a
+    clear RuntimeError rather than a kernel fault."""
+    from pulsed_ion_chamber.solver_cuda import _host_page_tables, run_simulation_cuda
+
+    reference = run_simulation_cuda(_fast_config(), progress=False, memory="device")
+    if not _host_page_tables(cp):
+        with pytest.raises(RuntimeError, match="host page tables"):
+            run_simulation_cuda(_fast_config(), progress=False, memory="host")
+        return
+    host = run_simulation_cuda(_fast_config(), progress=False, memory="host")
+    assert host.ks == pytest.approx(reference.ks, rel=RTOL)
+
+
+def test_max_steps_truncates_and_reports_per_step_cost():
+    """A grid too large to finish is still benchmarkable: max_steps stops the
+    loop, records how far it got, and refuses to report a k_s it did not earn."""
+    from pulsed_ion_chamber.solver_cuda import run_simulation_cuda
+
+    full = run_simulation_cuda(_fast_config(), progress=False)
+    truncated = run_simulation_cuda(_fast_config(), progress=False, max_steps=5)
+    assert truncated.steps_completed == 5
+    assert truncated.loop_elapsed_s > 0
+    assert np.isnan(truncated.ks)
+    # The first steps are the same run, so the efficiency series must match.
+    np.testing.assert_allclose(truncated.f_t[:5], full.f_t[:5], rtol=RTOL)
+
+
+def test_return_fields_false_drops_only_the_snapshot():
+    """The time series is what a large run is after; the two grid-sized host
+    arrays are what kills it on a memory-limited job."""
+    from pulsed_ion_chamber.solver_cuda import run_simulation_cuda
+
+    full = run_simulation_cuda(_fast_config(), progress=False)
+    lean = run_simulation_cuda(_fast_config(), progress=False, return_fields=False)
+    assert lean.positive_array.size == 0 and lean.negative_array.size == 0
+    assert lean.ks == pytest.approx(full.ks, rel=RTOL)
+    np.testing.assert_allclose(lean.f_t, full.f_t, rtol=RTOL)
+
+
+def test_rejects_impossible_options():
+    from pulsed_ion_chamber.solver_cuda import run_simulation_cuda, set_threads_per_block
+
+    with pytest.raises(ValueError, match="memory must be"):
+        run_simulation_cuda(_fast_config(), progress=False, memory="hbm")
+    with pytest.raises(ValueError, match="advise must be"):
+        run_simulation_cuda(_fast_config(), progress=False, advise="somewhere")
+    with pytest.raises(ValueError, match="power of two"):
+        set_threads_per_block(300)
+
+
+def test_block_size_is_tunable_and_does_not_move_the_answer():
+    """The block size is a machine tuning knob (256 measured best on both the
+    A100 and Hopper), so changing it must recompile and return the same physics."""
+    from pulsed_ion_chamber import solver_cuda
+
+    original = solver_cuda.THREADS_PER_BLOCK
+    reference = solver_cuda.run_simulation_cuda(_fast_config(), progress=False)
+    try:
+        solver_cuda.set_threads_per_block(128)
+        assert solver_cuda.run_simulation_cuda(_fast_config(), progress=False).ks == pytest.approx(
+            reference.ks, rel=RTOL
+        )
+    finally:
+        solver_cuda.set_threads_per_block(original)

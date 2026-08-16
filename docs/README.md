@@ -14,6 +14,7 @@ of the code lives here — only its current state.
 | [`BENCHMARKS-LAPTOP.md`](BENCHMARKS-LAPTOP.md) | **What does it cost *here*?** | You are running on a laptop. CPU spec, tier timings, the full-electrode run, and why one thread is the right number. |
 | [`BENCHMARKS-ARES.md`](BENCHMARKS-ARES.md) | **What does it cost on Ares?** | You are on Cyfronet Ares (2 × Xeon 8268, 48 cores, Sub-NUMA Clustering). Hardware, setup, thread scaling, and a scorecard of six predictions written before the run — the headline one was wrong, and why is the interesting part. |
 | [`HELIOS.md`](HELIOS.md) | **How do I run it on Helios?** | You are on a Cyfronet Helios node. Module setup, the Slurm cpuset trap, how many cores to ask for and what wall time to expect, thread and dose-rate scaling, why the big grid scales and the small one does not, and which optimisations made it slower. |
+| [`BENCHMARKS-HELIOS-GH200.md`](BENCHMARKS-HELIOS-GH200.md) | **How fine a grid can I actually run?** | You have a Grace Hopper node. Setup on aarch64, why `--mem` decides everything, the 1 µm column (2.0 G voxels, 60.6 GiB) at 108 ms/step in HBM, what device vs managed vs host memory costs when the grid outgrows the GPU, and the block size measured rather than assumed. |
 
 Two cross-cutting results that are easy to miss:
 

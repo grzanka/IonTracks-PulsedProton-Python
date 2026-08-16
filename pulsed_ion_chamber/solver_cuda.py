@@ -534,22 +534,29 @@ def _driver_mem_advise(ptr: int, nbytes: int, advice: int, location_type: int, l
 def _advise(cp, arrays, policy: str, device_budget_bytes: int) -> None:
     """Tell the driver where the managed carrier arrays should live.
 
-    Only meaningful for managed memory; a no-op on device allocations. The
-    three policies exist because which one wins is a property of the machine,
-    not of this code, and on GH200 it is not the one a PCIe intuition predicts
+    Only meaningful for managed memory; a no-op on device allocations. Measured
+    on a 7.7 GiB grid that fits in HBM, at 200 steps
     (docs/BENCHMARKS-HELIOS-GH200.md sec. 5):
 
-    ``"device"``  Prefer HBM and prefetch, in argument order, until
-    ``device_budget_bytes`` is spent; the remainder is left to fault in. The
-    obvious policy, and the right one when everything fits.
+    ``"device"``  **15.6 ms/step.** Prefer HBM and prefetch, in argument order,
+    until ``device_budget_bytes`` is spent; the remainder is left to fault in.
+    Within 2 % of a plain ``cudaMalloc`` run (15.3 ms), which is the result that
+    matters: managed memory costs nothing when the grid fits, so it is safe as
+    the default and the spill is available for free when the grid does not.
 
-    ``"host"``  Pin every page in host LPDDR5X and map it into the GPU
-    (``SetAccessedBy``), so the sweep *streams* over NVLink-C2C instead of
-    migrating pages. On an oversubscribed grid every array is read and written
-    every step, so there is no working set to keep resident and migration is
-    pure overhead -- this is the policy for the deeply oversubscribed case.
+    ``"none"``  **98.8 ms/step,** 6.4x worse. No hints, so every page is
+    migrated on its first fault and the sweep pays for it. The reason
+    ``"device"`` exists.
 
-    ``"none"``  No hints; whatever the driver's fault-driven default does.
+    ``"host"``  **273.7 ms/step,** 18x worse. Pins every page in host LPDDR5X
+    and maps it into the GPU, so the sweep streams over NVLink-C2C. This is a
+    *penalty* on a grid that fits -- it declines the HBM it was offered -- and
+    is here for the oversubscribed case it was written for, where there is no
+    resident working set to protect and migration is pure overhead. That case
+    is not yet measured; do not assume it wins there either.
+
+    Note it loses even to ``memory="host"`` (96.7 ms/step) doing ostensibly the
+    same thing, so the difference is migration machinery, not the link.
     """
     if policy == "none":
         return
@@ -641,6 +648,7 @@ def run_simulation_cuda(
     max_steps: Optional[int] = None,
     memory: str = "auto",
     advise: str = "device",
+    return_fields: bool = True,
 ) -> Result:
     """Simulate a pulse train on the GPU and return the full run record.
 
@@ -658,6 +666,13 @@ def run_simulation_cuda(
     benchmark of a grid too large to run to completion wants: a step count is
     reproducible where a wall-clock cut is not, so ms/step from two machines
     can be compared.
+
+    ``return_fields=False`` drops the final density snapshot from the Result
+    (the time series and ``k_s`` are unaffected). The snapshot is two host
+    arrays the size of the grid, and on a scheduled node the job's host memory
+    is routinely a fraction of the GPU's: a 60 GiB grid on a Helios GH200 with
+    ``--mem=12G`` runs happily and then dies copying the answer home. Anything
+    that only needs the scalars should turn it off.
 
     ``memory`` selects the allocator for the carrier arrays: ``"device"``
     (``cudaMalloc``, fails if the grid does not fit), ``"managed"``
@@ -834,9 +849,14 @@ def run_simulation_cuda(
     # k_s is the efficiency after *full* clearance, so a truncated run has none.
     ks = float("nan") if truncated else 1.0 / f_t[-1]
     # The field snapshot the Result carries lives on the host; copy the two final
-    # arrays back once, at the end (not per step).
-    positive_host = cp.asnumpy(positive_array)
-    negative_host = cp.asnumpy(negative_array)
+    # arrays back once, at the end (not per step) -- or not at all, if the
+    # caller said it does not want them (see return_fields).
+    if return_fields:
+        positive_host = cp.asnumpy(positive_array)
+        negative_host = cp.asnumpy(negative_array)
+    else:
+        positive_host = np.zeros((0, 0, 0))
+        negative_host = np.zeros((0, 0, 0))
     result = diagnostics.build_result(config, time_s, f_t, ks, positive_host, negative_host)
     if max_wall_s is not None or max_steps is not None:
         result.steps_completed = steps_completed

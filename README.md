@@ -80,6 +80,7 @@ Index: [`docs/README.md`](docs/README.md) — what each document answers.
 | [`docs/GPU.md`](docs/GPU.md) | The CUDA backend: setup, when the GPU wins, and the 5 µm full electrode in 156 s on an A100. |
 | [`docs/BENCHMARKS-LAPTOP.md`](docs/BENCHMARKS-LAPTOP.md) | Measured wall times on a laptop, and why one thread is the right number there. |
 | [`docs/HELIOS.md`](docs/HELIOS.md) | Running on a Cyfronet Helios node: setup, how many cores to ask for, what to expect. |
+| [`docs/BENCHMARKS-HELIOS-GH200.md`](docs/BENCHMARKS-HELIOS-GH200.md) | Helios's Grace Hopper nodes: the 1 µm column (2 G voxels) in HBM, and what unified memory costs when a grid outgrows the GPU. |
 | [`docs/BENCHMARKS-ARES.md`](docs/BENCHMARKS-ARES.md) | The same on Cyfronet Ares — and why its cores lose to Helios's by 1.7× despite a higher clock. |
 | [`pulsed_ion_chamber/README.md`](pulsed_ion_chamber/README.md) | What each module is for. |
 | [`examples/README.md`](examples/README.md) | What each example does. |

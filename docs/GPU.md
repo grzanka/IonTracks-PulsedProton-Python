@@ -222,6 +222,11 @@ spread across a wide grid rarely collide.
 
 ## 9. Caveats and future work
 
+- **Grace Hopper.** On a GH200 the carrier arrays can exceed the GPU's own
+  memory: `memory="managed"` or `memory="host"` spills them into the Grace
+  CPU's LPDDR5X across NVLink-C2C. Measured setup, the 1 µm column and what
+  each allocator costs are in
+  [BENCHMARKS-HELIOS-GH200.md](BENCHMARKS-HELIOS-GH200.md).
 - **One GPU, one run.** This backend uses a single device and does not shard a
   grid across GPUs. For parameter studies, independent single-process replicas
   (one per GPU, or the CPU replica pattern of PERFORMANCE.md §6) beat trying to
