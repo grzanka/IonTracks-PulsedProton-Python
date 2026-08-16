@@ -8,6 +8,16 @@
 > `bench_kernels.py` / `run_full_electrode_sweep.sh` below for the harness that
 > showed it. The Phase-1 material is kept as-is; it is the "before".
 
+## GPU benchmark
+
+`bench_gpu.py` times the CUDA backend against the batched CPU backend across a
+ladder of grid sizes (`--ladder crossover|full` or `--sizes r@grid,...`), on the
+same AIC-144 Markus scenario. It checks that `k_s` agrees before reporting a
+wall time, and writes JSON with `--json`. The measured Athena/A100 numbers it
+produced live in [`data/gpu_athena/`](data/gpu_athena/); the write-up is
+[`../docs/GPU.md`](../docs/GPU.md). Unlike the Helios study below it needs no
+`srun` step (one process, one GPU) but does need CuPy (`pip install -e ".[gpu]"`).
+
 ## The two machine studies
 
 Both are self-contained and have their own README:

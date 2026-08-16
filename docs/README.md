@@ -2,7 +2,7 @@
 
 [↑ repository README](../README.md)
 
-Six documents, split by the question they answer. Nothing about the history
+Seven documents, split by the question they answer. Nothing about the history
 of the code lives here — only its current state.
 
 | | question | read it if |
@@ -10,6 +10,7 @@ of the code lives here — only its current state.
 | [`PHYSICS.md`](PHYSICS.md) | **What is modelled, and why?** | You want to know whether a result means what you think it means. One section per aspect — beam, track structure, dose, chamber, grid, transport, time integration, boundaries, scoring — each stating the assumption and justifying it. Ends with what is *not* modelled and the known systematics. |
 | [`ALGORITHM.md`](ALGORITHM.md) | **How is it implemented?** | You are reading or changing the solver. Array layout, the two hot loops, the exact identities that make deposition cheap, what "batching" means and why it is exact, and where the parallelism is. |
 | [`PERFORMANCE.md`](PERFORMANCE.md) | **What does it cost?** | You are sizing a run or wondering whether to add threads. Cost model and scaling laws, machine-independent; points at the two benchmark pages for wall times. |
+| [`GPU.md`](GPU.md) | **How do I run it on a GPU, and when should I?** | You have an NVIDIA GPU and a grid too large for a CPU's cache. Setup, the crossover where the GPU starts to win, the 5 µm full electrode (466 M voxels) in 156 s on an A100, how the CUDA backend is built, and the coalescing fix that made it 3.7× faster. |
 | [`BENCHMARKS-LAPTOP.md`](BENCHMARKS-LAPTOP.md) | **What does it cost *here*?** | You are running on a laptop. CPU spec, tier timings, the full-electrode run, and why one thread is the right number. |
 | [`BENCHMARKS-ARES.md`](BENCHMARKS-ARES.md) | **What does it cost on Ares?** | You are on Cyfronet Ares (2 × Xeon 8268, 48 cores, Sub-NUMA Clustering). Hardware, setup, thread scaling, and a scorecard of six predictions written before the run — the headline one was wrong, and why is the interesting part. |
 | [`HELIOS.md`](HELIOS.md) | **How do I run it on Helios?** | You are on a Cyfronet Helios node. Module setup, the Slurm cpuset trap, how many cores to ask for and what wall time to expect, thread and dose-rate scaling, why the big grid scales and the small one does not, and which optimisations made it slower. |
@@ -21,4 +22,6 @@ Two cross-cutting results that are easy to miss:
   (`PHYSICS.md` §14).
 - The dominant cost is **memory bandwidth**, not arithmetic — so whether
   threads help is decided by whether the grid outgrows the machine's cache, not
-  by how many cores are free (`PERFORMANCE.md` §6, `HELIOS.md`).
+  by how many cores are free (`PERFORMANCE.md` §6, `HELIOS.md`), and the same
+  argument taken to its limit is why the largest grids belong on a GPU
+  (`GPU.md`).

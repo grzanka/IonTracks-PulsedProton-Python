@@ -201,6 +201,13 @@ Both pages state their own answer:
 the latter also lists the optimisations that turned out to make things *worse*,
 which is the more transferable half.
 
+**The bandwidth argument taken to its limit is a GPU.** An A100 has ~1.5 TB/s of
+HBM against ~900 GB/s aggregate on a full NUMA server, so on a grid large enough
+to fill it the `run_simulation_cuda` backend beats 32 CPU cores by 15× on the
+full electrode and runs the 5 µm full electrode — 466 M voxels, too large for
+any CPU cache — in 156 s. It is the same "large grids only" story: below the
+crossover (~r = 0.05 cm) a single CPU core is faster. [GPU.md](GPU.md).
+
 **For parameter studies, independent replicas beat threads either way**:
 different seeds, or a sweep over dose rate, energy and voltage, run as separate
 single-threaded processes. Measured: 64 concurrent single-threaded replicas via
