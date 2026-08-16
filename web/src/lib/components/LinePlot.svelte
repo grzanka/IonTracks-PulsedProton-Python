@@ -13,6 +13,7 @@
     xValues,
     series,
     valueDivisor = 1,
+    valueMax,
     xLabel = "time [µs]",
     yLabel = "",
     title = "",
@@ -23,6 +24,14 @@
     // every redraw (issue #19 W7).
     series: Series[];
     valueDivisor?: number;
+    // Raw (unscaled) peak across all series and all points, not just the
+    // decimated ones drawn -- pass this whenever the caller already tracks
+    // it incrementally (as +page.svelte's carrierPeak/recombinedPeak do).
+    // Without it, the y-axis scan below falls back to a full, undecimated
+    // pass so the scale stays correct; scanning only the decimated points
+    // would under-report a peak that falls between sampled indices,
+    // clipping the line and mislabelling the axis (PR #20 review).
+    valueMax?: number;
     xLabel?: string;
     yLabel?: string;
     title?: string;
@@ -71,10 +80,17 @@
     }
 
     let yMax = 0;
-    for (const s of series) {
-      for (const i of indices) {
-        const v = (s.values[i] ?? 0) / valueDivisor;
-        if (v > yMax) yMax = v;
+    if (valueMax !== undefined) {
+      yMax = valueMax / valueDivisor;
+    } else {
+      // No precomputed peak given -- fall back to a correct (undecimated)
+      // scan rather than one over just `indices`, which would silently
+      // under-report a peak sitting between strided samples.
+      for (const s of series) {
+        for (const v of s.values) {
+          const scaled = v / valueDivisor;
+          if (scaled > yMax) yMax = scaled;
+        }
       }
     }
     if (yMax <= 0) yMax = 1;
@@ -145,6 +161,8 @@
     // Re-run whenever the data changes.
     void xValues;
     void series;
+    void valueDivisor;
+    void valueMax;
     draw();
   });
 </script>

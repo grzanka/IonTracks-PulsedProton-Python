@@ -215,7 +215,14 @@ class SimulationConfig:
         # which one a given run used.
         self.effective_gap_cm = self.no_z * self.unit_length_cm
         gap_mismatch_cm = abs(self.effective_gap_cm - self.electrode_gap_cm)
-        if self.electrode_gap_cm > 0 and gap_mismatch_cm / self.electrode_gap_cm > 1e-3:
+        # Relative mismatch, reused by summary() below so its "gap differs"
+        # note uses the same tolerance as this warning rather than exact
+        # float equality, which would flag even an exact-multiple gap on the
+        # ~1e-16 noise float division leaves behind.
+        self._gap_mismatch_relative = (
+            gap_mismatch_cm / self.electrode_gap_cm if self.electrode_gap_cm > 0 else 0.0
+        )
+        if self._gap_mismatch_relative > 1e-3:
             warnings.warn(
                 f"electrode_gap_cm={self.electrode_gap_cm:.6g} cm is not an integer "
                 f"multiple of grid_size_um={self.grid_size_um:.4g} um "
@@ -511,9 +518,13 @@ class SimulationConfig:
                 f"{self.track_cutoff_cm * 1e4:.3g} um = {self.track_cutoff_voxels:.1f} voxels "
                 f"(discards {self.truncated_charge_fraction:.1e} of each track)"
             )
+        # A tight tolerance, not the 1e-3 the warning above fires at: an
+        # exact-multiple gap can still differ from electrode_gap_cm by
+        # ~1e-16 of float division noise, and exact equality would flag that
+        # as a "simulated as ..." note every time (issue #19 PR review).
         gap_note = (
             ""
-            if self.effective_gap_cm == self.electrode_gap_cm
+            if self._gap_mismatch_relative < 1e-9
             else (
                 f" [simulated as {self.no_z} voxels = {self.effective_gap_cm:.6g} cm, "
                 f"{100 * (self.effective_gap_cm - self.electrode_gap_cm) / self.electrode_gap_cm:+.2g}%]"
