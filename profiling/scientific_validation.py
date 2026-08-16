@@ -35,7 +35,14 @@ def jaffe_single_track_check(num_threads: int) -> dict:
     )
     rng = np.random.default_rng(config.seed)
     result = run_simulation_numba_parallel(config, rng=rng, progress=False, num_threads=num_threads)
-    ks_jaffe = jaffe_ks(config.LET_keV_um, config.voltage_V, config.electrode_gap_cm)
+    ks_jaffe = jaffe_ks(
+        config.LET_keV_um,
+        config.voltage_V,
+        config.electrode_gap_cm,
+        W_eV=config.W_eV,
+        mu=config.mu_positive,
+        D=config.D_positive,
+    )
     return {
         "num_threads": num_threads,
         "ks_simulation": float(result.ks),
