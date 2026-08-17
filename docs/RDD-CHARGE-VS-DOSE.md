@@ -10,10 +10,11 @@ that is right, reading Cucinotta, Katz, Wilson & Dubey (1996) —
 **The answer.** It is not right, and the error is concentrated exactly where it
 does the most damage. About a third of the tabulated dose sits in a core that is
 *molecular excitation*, which creates no ion pair at all — and it sits at the
-density peak, where recombination (`∝ n²`) is most sensitive. Correcting it
-also removes the reason the `h`-ladder in
+density peak, where recombination (`∝ n²`) is most sensitive. Correcting it also
+removes the reason the `h`-ladder in
 [`../examples/fe90_air/README.md`](../examples/fe90_air/README.md) §7 fails to
-converge.
+converge: rebuilt as a charge distribution, the same ladder settles to four
+significant figures (§4.4) where the dose version was still climbing.
 
 Companion documents: [`CUCINOTTA-RDD-STUDY.md`](CUCINOTTA-RDD-STUDY.md) is the
 earlier feasibility study for the AIC-144 *proton* multi-track case — grids,
@@ -259,19 +260,33 @@ agree to a few percent.
 
 **The ladder settles.** R = 120 µm, one ion, `r₀` = 5 µm, two cores:
 
-| `h` [µm] | `k_s` (chamber), charge-RDD | `k_s` (chamber), dose-RDD |
-|---|---|---|
-| 10 | 1.173117 ᵃ | 1.322332 |
-| 5 | 1.137180 | 1.386873 |
-| 2.5 | 1.142586 | 1.438139 |
-| increment, 5 → 2.5 | **+0.0054** | +0.0432, and still climbing |
+| `h` [µm] | core `n₀` [cm⁻³] | `k_s` (chamber) | increment | ratio | dose-RDD, same grid |
+|---|---|---|---|---|---|
+| 10 | 6.583e10 ᵃ | 1.173117 ᵃ | | | 1.322332 |
+| 5 | 8.129e10 | 1.137180 | | | 1.386873 |
+| 2.5 | 8.181e10 | 1.142586 | +0.005406 | | 1.438139 |
+| 1.25 | 8.375e10 | **1.143289** | **+0.000703** | **0.130** | 1.481347 |
 
 ᵃ Not a valid rung: one voxel is wider than the core, so `r₀` is unresolved.
 
-Between the two rungs that do resolve the core, the answer moves **0.5 %**,
-against 4.3 % and rising for the dose-RDD at the same step. That is the
-structural difference a finite inner cutoff buys — refining past `r₀` stops
-changing anything, because the peak density stops growing.
+Read the last two columns against each other, because this is the whole
+argument:
+
+- **charge-RDD**: increments +0.005406, +0.000703 — a ratio of **0.130**,
+  *falling*. Geometric extrapolation gives a limit of **1.1434**, which the
+  1.25 µm rung already reaches to four significant figures.
+- **dose-RDD**: increments +0.064541, +0.051266, +0.043208 — ratios 0.794,
+  0.843, *rising*, extrapolating to ≥ 1.71 and possibly nowhere at all
+  (Fe-90 README §7.1).
+
+The peak density says the same thing more directly. Across a 4× refinement the
+charge-RDD's `n₀` moves **3 %** (8.13e10 → 8.38e10) while the dose-RDD's moves
+**14×** (3.56e11 → 5.05e12). A finite inner cutoff gives a finite peak density,
+so refining past `r₀` stops changing the answer. That is the property the whole
+construction exists to buy, and it is now measured rather than argued.
+
+**Converged value: `k_s`(chamber) = 1.1434 at `r₀` = 5 µm**, against 1.481 and
+climbing for the dose-RDD at the same spacing.
 
 **`r₀` now carries the uncertainty, and that is the right place for it.** At
 h = 2.5 µm:
@@ -286,8 +301,9 @@ exactly the trade §4.3 was after. Note that *every* row is far below the
 dose-RDD's 1.481 at h = 1.25 µm and its extrapolated ≥ 1.71: removing the
 excitation core moves the answer substantially, in the direction §3.1 predicted.
 
-**Still open:** the 1.25 µm rung of the charge-RDD ladder, which would confirm
-the plateau rather than infer it from two points.
+**`r₀` is now the only free parameter.** With `h` no longer able to move the
+answer, the model reduces to a single measurable input — which is what §4.3 was
+after and what §6 now turns on.
 
 ## 5. Why the multi-track case is the *easy* one
 
@@ -315,7 +331,8 @@ Two practical consequences:
 ## 6. Recommended order
 
 1. ~~Measure the charge-RDD against the dose-RDD on the Fe-90 ladder~~ — done,
-   §4.4. It converges; the dose-RDD does not.
+   §4.4. It converges to `k_s`(chamber) = 1.1434 at `r₀` = 5 µm; the dose-RDD
+   does not converge at all.
 2. **Find the electron thermalisation distance in air at 1 atm** from the
    literature (§4.3). This is now the *only* thing between the model and a
    number: §4.4 shows `r₀` moves `k_s − 1` by 3.3× across 1–20 µm, and needs no
