@@ -128,6 +128,64 @@ def _insert_track_numba(
 
 
 @numba.njit(cache=True)
+def _insert_stencil_numba(
+    positive_array: FloatArray3D,
+    negative_array: FloatArray3D,
+    stencil: npt.NDArray[np.float64],
+    no_xy: int,
+    no_z: int,
+    no_z_electrode: int,
+    mid_xy: float,
+    scoring_radius_sq: float,
+) -> float:
+    """Deposit one track from a precomputed full-grid 2D stencil.
+
+    The tabulated-RDD counterpart of :func:`_insert_track_numba`. Same contract
+    -- add the track's carrier density to both species in every gap layer, and
+    return what landed inside the scored region -- but none of the Gaussian's
+    three shortcuts apply (see the module docstring): a tabulated profile is not
+    separable and has no radius past which it is numerically zero, so the
+    stencil spans the whole grid and is built once, outside the run, by
+    :func:`pulsed_ion_chamber.rdd.build_track_stencil`.
+
+    Cost is therefore `O(no_xy^2 * no_z)` per track rather than
+    `O(stencil^2 * no_z)`. For the single deliberate ion this path exists for,
+    that is one grid pass in a run of hundreds of grid sweeps -- invisible.
+    `SimulationConfig.rdd_max_tracks` is what stops it being used where it
+    would not be.
+
+    Zero columns are skipped: outside the deposited region the stencil really
+    is zero (the RDD's far bins put no sample there), and on a wide grid that
+    is most of it.
+    """
+    inserted = 0.0
+    k_lo = no_z_electrode
+    k_hi = no_z_electrode + no_z
+    for i in range(no_xy):
+        di_sq = (i - mid_xy) ** 2
+        for j in range(no_xy):
+            ion_density = stencil[i, j]
+            if ion_density == 0.0:
+                continue
+            for k in range(k_lo, k_hi):
+                positive_array[i, j, k] += ion_density
+                negative_array[i, j, k] += ion_density
+            # Scored on the interior the Lax-Wendroff sweep actually visits,
+            # matching _broadcast_density_numba_parallel: the outer ring is
+            # never swept, so counting what the stencil puts there as injected
+            # would be charge that structurally cannot recombine (issue #19
+            # P2). It matters more here than for a Gaussian -- an RDD has a
+            # tail everywhere, so the ring is never empty.
+            if (
+                1 <= i <= no_xy - 2
+                and 1 <= j <= no_xy - 2
+                and di_sq + (j - mid_xy) ** 2 < scoring_radius_sq
+            ):
+                inserted += ion_density * no_z
+    return inserted
+
+
+@numba.njit(cache=True)
 def _lax_wendroff_step_numba(
     positive_array: FloatArray3D,
     negative_array: FloatArray3D,
@@ -260,7 +318,14 @@ def run_simulation_numba(
     """
     rng = rng if rng is not None else np.random.default_rng(config.seed)
     schedule = build_track_schedule(config, rng)
-    sampler = CylinderSampler(rng, config.mid_xy, config.sampling_radius, config.no_xy)
+    # Axis placement draws nothing, so the sampler is not built at all rather
+    # than built and bypassed -- that keeps the RNG stream of a "random" run
+    # identical to what it was before this branch existed.
+    on_axis = config.track_placement == "axis"
+    sampler = (
+        None if on_axis else CylinderSampler(rng, config.mid_xy, config.sampling_radius, config.no_xy)
+    )
+    stencil = None if config.track_stencil is None else config.track_stencil.density_cm3
 
     # Two arrays per species: the sweep reads `*_array` and writes `*_next`,
     # so no voxel update can observe a half-updated neighbour.
@@ -289,24 +354,40 @@ def run_simulation_numba(
         # Sampled a step at a time, deposited one at a time: the sampler draws
         # the same RNG stream either way (see pulses.CylinderSampler), so this
         # backend and the batched one stay track-for-track identical.
-        step_xs, step_ys = sampler.sample(schedule[step])
+        if on_axis:
+            step_xs = np.full(schedule[step], config.mid_xy)
+            step_ys = step_xs
+        else:
+            step_xs, step_ys = sampler.sample(schedule[step])
         for x, y in zip(step_xs, step_ys):
             diagnostics.count_track(x, y)
-            injected_this_step += _insert_track_numba(
-                positive_array,
-                negative_array,
-                x,
-                y,
-                config.no_xy,
-                config.no_z,
-                config.no_z_electrode,
-                h2,
-                b2,
-                config.Gaussian_factor,
-                config.mid_xy,
-                config.scoring_radius_sq,
-                config.track_cutoff_voxels,
-            )
+            if stencil is not None:
+                injected_this_step += _insert_stencil_numba(
+                    positive_array,
+                    negative_array,
+                    stencil,
+                    config.no_xy,
+                    config.no_z,
+                    config.no_z_electrode,
+                    config.mid_xy,
+                    config.scoring_radius_sq,
+                )
+            else:
+                injected_this_step += _insert_track_numba(
+                    positive_array,
+                    negative_array,
+                    x,
+                    y,
+                    config.no_xy,
+                    config.no_z,
+                    config.no_z_electrode,
+                    h2,
+                    b2,
+                    config.Gaussian_factor,
+                    config.mid_xy,
+                    config.scoring_radius_sq,
+                    config.track_cutoff_voxels,
+                )
 
         no_initialised += injected_this_step
         recombined, total_p, total_n = _lax_wendroff_step_numba(

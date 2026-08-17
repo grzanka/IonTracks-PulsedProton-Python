@@ -687,6 +687,22 @@ def run_simulation_cuda(
     cp = ns.cp
     tpb = ns.tpb
 
+    # The GPU deposition kernels are Gaussian-specific (1D factors, a cutoff
+    # stencil, an atomic accumulate). A config carrying a tabulated RDD would
+    # otherwise run here and quietly return the *Gaussian* answer -- same
+    # config, same-looking Result, silently different physics. Refuse instead;
+    # porting the stencil path is tracked in examples/fe90_air/README.md sec. 7.
+    if getattr(config, "track_stencil", None) is not None:
+        raise NotImplementedError(
+            "The CUDA backend does not implement the tabulated-RDD track model "
+            "(config.rdd_csv is set). Use run_simulation_numba or "
+            "run_simulation_numba_parallel, which do."
+        )
+    if getattr(config, "track_placement", "random") != "random":
+        raise NotImplementedError(
+            f"The CUDA backend only implements track_placement='random', got "
+            f"{config.track_placement!r}."
+        )
     if memory not in ("auto", "device", "managed", "host"):
         raise ValueError(f'memory must be "auto", "device", "managed" or "host", got {memory!r}.')
     if advise not in ("device", "host", "none"):

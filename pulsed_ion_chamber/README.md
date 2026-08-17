@@ -10,6 +10,7 @@ the algorithm in [`../docs/ALGORITHM.md`](../docs/ALGORITHM.md).
 | `config.py` | `SimulationConfig`: every physical input, plus the derived grid, time step and track count. Validates aggressively — an impossible grid, an unstable `dt` or a run larger than available RAM is refused here rather than discovered mid-run. |
 | `constants.py` | Kanai (1998) ion-transport constants for air, `W`, air densities. Single- and two-species values side by side. |
 | `stopping_power.py` | LET from tabulated PSTAR data, the Rossomme track-radius fit, and dose-rate → fluence-rate. |
+| `rdd.py` | The alternative track model: a tabulated radial dose distribution (e.g. libamtrack's Cucinotta RDD), area-averaged onto the grid, plus the correction that puts `k_s` back on a whole-chamber basis once the penumbra runs off the edge of it. Opt-in via `SimulationConfig.rdd_csv`; the Gaussian remains the default. |
 | `resources.py` | Host RAM and CPU discovery, and the guards built on them. |
 
 ## Running

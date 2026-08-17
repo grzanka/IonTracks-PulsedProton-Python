@@ -38,6 +38,7 @@ from pulsed_ion_chamber.stopping_power import (
 
 LATERAL_BOUNDARIES = ("absorbing", "reflecting")
 SCORING_REGIONS = ("track_disc", "full_grid")
+TRACK_PLACEMENTS = ("random", "axis")
 
 
 def _von_neumann_dt(ion_diff, grid_spacing_cm, ion_mobility, Efield_V_cm):
@@ -175,6 +176,45 @@ class SimulationConfig:
     # the scheme would not merely lose accuracy, it would blow up.
     dt_seconds: Optional[float] = None
 
+    # --- track model: Gaussian (default) or a tabulated radial dose distribution ---
+    # Path to a two-column (radius, dose) table, e.g. a libamtrack Cucinotta
+    # RDD. When set, tracks are deposited from that table instead of from the
+    # `exp(-r^2/b^2)` Gaussian, and `track_radius_cm` (the Rossomme fit) stops
+    # being used for anything but reporting -- it is a proton/light-ion
+    # parameterisation and has no business describing an iron track.
+    #
+    # The RDD path builds one full-grid stencil at construction time and reuses
+    # it, so it requires `track_placement="axis"`: a tabulated profile is
+    # neither separable nor naturally truncated (see rdd.py), so there is no
+    # cheap way to re-centre it per track. That makes it right for a single
+    # deliberate ion and wrong for a dose-rate-driven pulse; `n_tracks` is
+    # capped accordingly.
+    rdd_csv: Optional[str] = None
+    rdd_r_unit: str = "m"  # libamtrack writes metres; this code works in cm
+    # Gas density the RDD's dose values were computed for, in kg/m^3. Defaults
+    # to air_density_kg_m3. The radial *energy* integral scales linearly with
+    # it, so a mismatch here is a silent renormalisation of the whole track.
+    rdd_density_kg_m3: Optional[float] = None
+    # Largest track count the RDD stencil path will accept. Deposition there is
+    # a full-grid pass per track rather than a truncated stencil, so a large
+    # pulse would be quadratically slower with no warning.
+    rdd_max_tracks: int = 64
+
+    # Explicit track count, overriding the dose-rate derivation above. The
+    # dose-rate path answers "how many tracks does 8.91 Gy/s put in this disc";
+    # this one answers "shoot exactly one ion", which is a different
+    # experiment and not reachable by tuning a dose rate down until the
+    # rounding happens to land on 1.
+    n_tracks: Optional[int] = None
+
+    # "random": rejection-sample each track inside the sampled disc (the
+    #   original behaviour, and what a real beam does).
+    # "axis": every track on the grid's centre line. For a single-ion run this
+    #   removes the placement variance entirely -- with one track, a random
+    #   position makes k_s a random variable whose spread across seeds is far
+    #   larger than the effects being studied.
+    track_placement: str = "random"
+
     seed: Optional[int] = None
 
     def __post_init__(self):
@@ -192,6 +232,10 @@ class SimulationConfig:
             )
         if self.scoring_region not in SCORING_REGIONS:
             raise ValueError(f"scoring_region must be one of {SCORING_REGIONS}, got {self.scoring_region!r}.")
+        if self.track_placement not in TRACK_PLACEMENTS:
+            raise ValueError(
+                f"track_placement must be one of {TRACK_PLACEMENTS}, got {self.track_placement!r}."
+            )
         if isinstance(self.chamber_fill_fraction, bool) or not 0 < self.chamber_fill_fraction <= 1:
             raise ValueError(
                 f"chamber_fill_fraction must be a number in (0, 1], got {self.chamber_fill_fraction!r}."
@@ -397,8 +441,72 @@ class SimulationConfig:
         self.number_of_tracks_per_pulse = max(
             1, int(round(fluence_rate_inst_cm2_s * self.pulse_duration_s * self.area_cm2))
         )
+        if self.n_tracks is not None:
+            if isinstance(self.n_tracks, bool) or self.n_tracks < 1:
+                raise ValueError(f"n_tracks must be a positive integer, got {self.n_tracks!r}.")
+            self.number_of_tracks_per_pulse = int(self.n_tracks)
 
+        self._build_track_model()
         self._estimate_and_check_memory()
+
+    def _build_track_model(self):
+        """Resolve which radial profile tracks are deposited with.
+
+        Leaves `track_stencil = None` for the Gaussian default. Otherwise loads
+        the table, builds the one full-grid stencil the run will reuse, and
+        records how much of the track's energy that grid actually holds --
+        which for any real RDD is well under 1 and is needed to correct `k_s`
+        back to the whole chamber (see rdd.chamber_ks).
+        """
+        self.track_stencil = None
+        self.rdd = None
+        self.in_domain_let_fraction = 1.0
+        if self.rdd_csv is None:
+            return
+
+        # Imported here rather than at module scope: rdd.py imports nothing
+        # from config.py, but keeping the dependency one-directional and lazy
+        # means the Gaussian path pays nothing for a model it does not use.
+        from pulsed_ion_chamber.rdd import RadialDoseDistribution, build_track_stencil
+
+        if self.track_placement != "axis":
+            raise ValueError(
+                f"rdd_csv requires track_placement='axis', got {self.track_placement!r}. "
+                "The RDD stencil is built once around a fixed centre; a tabulated "
+                "profile is neither separable nor truncated, so re-centring it per "
+                "track would mean rebuilding a full-grid array per track."
+            )
+        if self.number_of_tracks_per_pulse > self.rdd_max_tracks:
+            raise ValueError(
+                f"rdd_csv with {self.number_of_tracks_per_pulse:,} tracks/pulse exceeds "
+                f"rdd_max_tracks={self.rdd_max_tracks}. RDD deposition is a full-grid "
+                "pass per track, so this would be far slower than the Gaussian path "
+                "without saying so. Raise rdd_max_tracks if that is really what you want."
+            )
+
+        density_kg_m3 = (
+            self.air_density_kg_m3 if self.rdd_density_kg_m3 is None else self.rdd_density_kg_m3
+        )
+        self.rdd = RadialDoseDistribution.from_csv(
+            self.rdd_csv,
+            density_g_cm3=density_kg_m3 * 1e-3,  # kg/m^3 -> g/cm^3
+            r_unit=self.rdd_r_unit,
+        )
+        self.track_stencil = build_track_stencil(
+            self.rdd,
+            unit_length_cm=self.unit_length_cm,
+            no_xy=self.no_xy,
+            centre_xy=(self.mid_xy, self.mid_xy),
+            W_eV=self.W_eV,
+        )
+        self.in_domain_let_fraction = self.track_stencil.in_domain_fraction
+        # The LET the run actually deposits, which is the table's integral over
+        # the grid -- not `LET_keV_um` from the stopping-power table, and not
+        # the table's full-range integral either. Reported, never silently
+        # substituted: `LET_keV_um` still drives the Jaffe/Boag references and
+        # the dose-rate conversion, both of which want the true stopping power.
+        self.rdd_LET_keV_um = self.rdd.LET_keV_um
+        self.deposited_LET_keV_um = self.track_stencil.deposited_keV_per_cm * 1e-4
 
     def _estimate_and_check_memory(self):
         """Size the run's peak allocation and refuse it if it will not fit.
@@ -418,7 +526,9 @@ class SimulationConfig:
         voxels = self.no_xy**2 * self.no_z_with_buffer
         self.carrier_array_bytes = 4 * voxels * 8
         self.track_schedule_bytes = 2 * self.number_of_tracks_per_pulse * 8
-        self.scratch_bytes = self.no_xy**2 * 8
+        # The batched backend's 2D density scratch, plus the RDD stencil when
+        # there is one -- same no_xy^2 shape, and it stays live for the run.
+        self.scratch_bytes = self.no_xy**2 * 8 * (2 if self.track_stencil is not None else 1)
         # The schedule is freed before the run proper, so peak is whichever
         # phase is larger rather than the sum.
         self.estimated_memory_bytes = max(
@@ -510,7 +620,18 @@ class SimulationConfig:
                 f"{1.0 / self.chamber_fill_fraction**2:.3g}x nominal areal density)"
             )
         )
-        if self.track_cutoff_sigmas is None:
+        if self.track_stencil is not None:
+            cutoff_note = (
+                f"tabulated RDD, area-averaged onto the grid\n"
+                f"                        source = {self.rdd.source}\n"
+                f"                        table integrates to {self.rdd_LET_keV_um:.4g} keV/um "
+                f"(stopping-power table says {self.LET_keV_um:.4g})\n"
+                f"                        grid holds {self.deposited_LET_keV_um:.4g} keV/um = "
+                f"{100 * self.in_domain_let_fraction:.2f} % of it; the rest is created in the "
+                "chamber but not simulated\n"
+                f"                        peak voxel density {self.track_stencil.density_cm3.max():.3e} cm^-3"
+            )
+        elif self.track_cutoff_sigmas is None:
             cutoff_note = "no truncation (whole grid per track)"
         else:
             cutoff_note = (

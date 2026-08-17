@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| `fe90_air/` | A single 90 MeV/u iron ion in air with a tabulated Cucinotta RDD — the cross-check against an IonTracks-FEniCSx run, and the worked example of the non-Gaussian track model. |
 | `ifj_aic144/` | A real measurement campaign — the AIC-144 cyclotron at IFJ PAN with a PTW Markus 23343 chamber. Start here: how a concrete scenario is set up, run and reported. |
 
 ## `ifj_aic144/`
@@ -80,3 +81,33 @@ replotted any number of times, moved to another machine, or handed to
 someone who never runs the simulation at all — none of which was possible
 while a single script did both jobs. See `results/full_electrode/` for a
 committed run record.
+
+## `fe90_air/`
+
+One ion, on the axis, deposited from a libamtrack radial dose distribution
+instead of the Gaussian — a different question from `ifj_aic144/`, which asks
+what a dose *rate* does to a chamber. Here there is only initial (columnar)
+recombination, and the answer is set by how well the grid resolves the track
+core.
+
+```bash
+python examples/fe90_air/run_fe90.py --ladder --threads 2  # ~30 s
+```
+
+```bash
+python examples/fe90_air/run_fe90.py --h-um 5 --threads 2  # one rung
+```
+
+```bash
+python examples/fe90_air/run_fe90.py --ladder --fine --threads 2  # adds 1.25 um, ~10 min
+```
+
+```bash
+python examples/fe90_air/run_fe90.py --ladder --dry-run  # sizing only, allocates nothing
+```
+
+It always prints two `k_s` values. `k_s (in-domain)` is the loss as a fraction
+of the charge inside the grid — what any solver reports by default. `k_s
+(chamber)` corrects for the delta-ray halo that extends to ~10 cm and that no
+affordable grid contains; it is the physically meaningful one, and the two
+differ by ~28 %. See [`fe90_air/README.md`](fe90_air/README.md).

@@ -559,7 +559,14 @@ def run_simulation_numba_parallel(
     # Draws the identical stream of doubles the per-track sampler would, in
     # blocks -- 166x faster, and 24.6 M tracks of a full-electrode run would
     # otherwise spend 110 s in a Python loop. See pulses.CylinderSampler.
-    sampler = CylinderSampler(rng, config.mid_xy, config.sampling_radius, config.no_xy)
+    # Axis placement draws nothing, so the sampler is not built at all rather
+    # than built and bypassed -- that keeps a "random" run's RNG stream exactly
+    # what it was before this branch existed.
+    on_axis = config.track_placement == "axis"
+    sampler = (
+        None if on_axis else CylinderSampler(rng, config.mid_xy, config.sampling_radius, config.no_xy)
+    )
+    stencil = None if config.track_stencil is None else config.track_stencil.density_cm3
 
     # Two arrays per species: the sweep reads `*_array` and writes `*_next`,
     # so every voxel update is independent of every other. That double buffer
@@ -602,25 +609,40 @@ def run_simulation_numba_parallel(
         n_tracks_this_step = schedule[step]
         if n_tracks_this_step > 0:
             timer.start()
-            xs, ys = sampler.sample(n_tracks_this_step)
+            if on_axis:
+                xs = np.full(n_tracks_this_step, config.mid_xy)
+                ys = xs
+            else:
+                xs, ys = sampler.sample(n_tracks_this_step)
             timer.stop("sample_xy")
-            # Deposition in three stages: 1D Gaussian factors per track, a
-            # row index so the accumulation kernel can parallelise safely, then
-            # sum into 2D and broadcast down z once. See the module docstring.
-            timer.start()
-            gauss_i, gauss_j, lo_i, hi_i, lo_j, hi_j = _precompute_track_gaussians(
-                xs, ys, config.no_xy, h2, b2, cutoff_voxels
-            )
-            timer.stop("track_gaussians")
-            timer.start()
-            total_density[:] = 0.0
-            offsets, track_ids = _build_row_index(lo_i, hi_i, config.no_xy)
-            timer.stop("row_index")
-            timer.start()
-            _accumulate_track_density_numba_parallel(
-                total_density, gauss_i, gauss_j, lo_i, lo_j, hi_j, offsets, track_ids, config.no_xy
-            )
-            timer.stop("accumulate")
+            if stencil is not None:
+                # The tabulated-RDD path needs none of the Gaussian machinery:
+                # this step's 2D density is the prebuilt stencil times the track
+                # count, because every track sits on the same centre line. Phase
+                # 2 below is then shared verbatim with the Gaussian path, which
+                # is what keeps the two backends and the two track models from
+                # drifting apart.
+                timer.start()
+                np.multiply(stencil, float(n_tracks_this_step), out=total_density)
+                timer.stop("accumulate")
+            else:
+                # Deposition in three stages: 1D Gaussian factors per track, a
+                # row index so the accumulation kernel can parallelise safely, then
+                # sum into 2D and broadcast down z once. See the module docstring.
+                timer.start()
+                gauss_i, gauss_j, lo_i, hi_i, lo_j, hi_j = _precompute_track_gaussians(
+                    xs, ys, config.no_xy, h2, b2, cutoff_voxels
+                )
+                timer.stop("track_gaussians")
+                timer.start()
+                total_density[:] = 0.0
+                offsets, track_ids = _build_row_index(lo_i, hi_i, config.no_xy)
+                timer.stop("row_index")
+                timer.start()
+                _accumulate_track_density_numba_parallel(
+                    total_density, gauss_i, gauss_j, lo_i, lo_j, hi_j, offsets, track_ids, config.no_xy
+                )
+                timer.stop("accumulate")
             timer.start()
             diagnostics.count_tracks(xs, ys)
             timer.stop("count_tracks")
@@ -632,7 +654,9 @@ def run_simulation_numba_parallel(
                 config.no_xy,
                 config.no_z,
                 config.no_z_electrode,
-                config.Gaussian_factor,
+                # The RDD stencil already carries absolute density; only the
+                # Gaussian path factors its peak out of phase 1 and back in here.
+                1.0 if stencil is not None else config.Gaussian_factor,
                 config.mid_xy,
                 config.scoring_radius_sq,
             )

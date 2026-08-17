@@ -24,6 +24,7 @@ and docs/PERFORMANCE.md / docs/GPU.md for what it costs.
 """
 
 from pulsed_ion_chamber.config import SimulationConfig
+from pulsed_ion_chamber.rdd import RadialDoseDistribution, chamber_ks
 from pulsed_ion_chamber.solver_cuda import run_simulation_cuda
 from pulsed_ion_chamber.solver_numba import run_simulation_numba
 from pulsed_ion_chamber.solver_numba_parallel import run_simulation_numba_parallel
@@ -32,6 +33,8 @@ from pulsed_ion_chamber.state import Result
 __all__ = [
     "SimulationConfig",
     "Result",
+    "RadialDoseDistribution",
+    "chamber_ks",
     "run_simulation_numba",
     "run_simulation_numba_parallel",
     "run_simulation_cuda",

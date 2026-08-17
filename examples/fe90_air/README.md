@@ -1,14 +1,19 @@
 # 90 MeV/u iron in air — single ion, Cucinotta RDD
 
-**Status: plan + sizing study. Not yet runnable** — the RDD deposition kernel
-(§4.1) does not exist yet. Everything below the sizing section is what has to be
-built; everything in the sizing section is measured on this laptop
-(Intel Core Ultra 5 225U, 14 threads, 30.8 GiB RAM).
+**Status: implemented and running.** The RDD track model is in
+[`pulsed_ion_chamber/rdd.py`](../../pulsed_ion_chamber/rdd.py), wired into both
+CPU backends, covered by [`tests/test_rdd.py`](../../tests/test_rdd.py), and
+driven by [`run_fe90.py`](run_fe90.py) in this directory. Results are in §5.
+All numbers on this laptop (Intel Core Ultra 5 225U, 30.8 GiB RAM).
+
+```bash
+python examples/fe90_air/run_fe90.py --ladder --threads 2
+```
 
 Cross-code target: a colleague's IonTracks-FEniCSx run on an unstructured
 tetrahedral mesh — cylinder R = 120 µm × 2000 µm tall, 28,515 vertices /
 164,612 tetrahedra, spacing varying quadratically from 5 µm on the axis to
-50 µm at the wall.
+50 µm at the wall; dt = 700 ns, 987 steps, 4 min 41 s on one core.
 
 ## 1. The input data
 
@@ -298,17 +303,60 @@ The two grids agreeing to 6 digits confirms the domain width is not what limits
 this — the Gaussian is 49 µm wide, so both grids resolve it fully.
 
 That is also the measure of how much the RDD changes: the Gaussian's peak
-density is 2.14e9 cm⁻³, against 3.5e11 cm⁻³ for the area-averaged Cucinotta core
-at the same 5 µm spacing — **164× higher**. Expect `k_s − 1` to move by orders
-of magnitude, upward, and to keep moving as `h` shrinks.
+density is 2.14e9 cm⁻³, against 3.56e11 cm⁻³ for the area-averaged Cucinotta
+core at the same 5 µm spacing — **166× higher**. Measured, that turns into a
+14× larger loss (§6), and unlike the Gaussian's it keeps growing as `h` shrinks.
 
-## 6. Order of work
+## 6. Results
 
-1. RDD table loader + area-averaged stencil (§4.1), validated by checking the
-   deposited charge against `2πρ∫D r dr` over the domain.
-2. Axis placement and explicit track count (§4.4).
-3. Out-of-domain correction (§4.2), reported alongside the raw in-domain number.
-4. The `h` ladder at R = 120 µm (§4.3), each rung at its own von Neumann `dt`
-   (§3.1), then one R = 600 µm run at the best affordable `h` to size the
-   lateral truncation error.
-5. Analytic recombination update (§4.3) — cheap insurance, not a prerequisite.
+`python examples/fe90_air/run_fe90.py --ladder --threads 2`, R = 120 µm
+throughout, one iron ion on the axis:
+
+| `h` [µm] | grid | core `n₀` [cm⁻³] | in-domain | `dt` [ns] | steps | `k_s` (in-domain) | `k_s` (chamber) | loss | RAM | wall |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 10 | 28×28×206 | 9.417e10 | 72.05 % | 444 | 331 | 1.511338 | 1.322332 | 24.38 % | 4.9 MiB | 0.2 s |
+| 5 | 56×56×406 | 3.561e11 | 72.05 % | 209 | 705 | 1.631729 | 1.386873 | 27.90 % | 39 MiB | 1.6 s |
+| 2.5 | 112×112×806 | 1.343e12 | 72.05 % | 92 | 1596 | 1.732612 | 1.438139 | 30.47 % | 309 MiB | 28.2 s |
+
+Three things to read off it.
+
+**The out-of-domain correction is not a detail.** `k_s − 1` falls by 28 % when
+the charge outside the column is put back in the denominator (1.632 → 1.387 at
+5 µm). Any comparison against the FEniCS run has to agree on which of the two
+columns is being compared, and the raw in-domain number is the one both codes
+produce by default.
+
+**`in-domain` is identical to four digits across a 8× range of spacing.** That
+is the area-averaging property of §4.1 working: the three grids cover the same
+280 µm column and hold the same 72.05 % of the track. Point-sampling the RDD
+instead would make this drift with `h`, and every `k_s` above would move for a
+reason that has nothing to do with physics.
+
+**`k_s` is not converged, and rises as predicted.** Halving `h` roughly
+quadruples the core density and adds ~5 % to `k_s − 1` each time. The
+increments are shrinking (+0.0645, +0.0513 on the chamber figure, a ratio of
+0.80), so this is converging rather than diverging — but not to anything the
+three rungs pin down. The 1.25 µm rung is what says where.
+
+**Against the Gaussian.** Same ion, same grid, same field, only the radial
+profile differs: the Rossomme Gaussian gives `k_s` = 1.0435 at 5 µm, the
+Cucinotta RDD 1.6317. The loss is **14× larger**. That is the whole reason the
+RDD was worth implementing, and it means no result from the Gaussian track
+model should be quoted for iron.
+
+## 7. What is left
+
+1. ~~RDD table loader + area-averaged stencil~~ — `pulsed_ion_chamber/rdd.py`.
+2. ~~Axis placement and explicit track count~~ — `track_placement`, `n_tracks`.
+3. ~~Out-of-domain correction~~ — `rdd.chamber_ks`, reported by `run_fe90.py`.
+4. The `h` ladder below 1.25 µm. Each further halving is 16× the work
+   (§3, `h⁻⁴`) and the laptop is out of room at 0.625 µm (19 GiB); this is the
+   natural point to move to Athena or Helios, or to `solver_cuda` on a GH200
+   where the unified-memory path (#22) exists for exactly this.
+5. One R = 600 µm run at the best affordable `h`, to size the lateral
+   truncation error separately from the core one.
+6. Analytic recombination update (§4.3) — cheap insurance, not a prerequisite.
+7. Anisotropic spacing (§3). A single track is uniform along `z`, so `hz` is
+   being refined for no reason: the 1.25 µm rung spends 80.6 M voxels where
+   ~20 M would do. Needs a new stencil and a new stability condition, and it is
+   the single biggest available saving.
