@@ -239,6 +239,56 @@ model artefacts — has a physical explanation rather than only an empirical one
 the one quantity here taken from general gas-detector reasoning rather than from
 the paper or the tabulation.
 
+## 4.4 Measured: the charge-RDD converges, the dose-RDD does not
+
+Built by [`../examples/fe90_air/charge_rdd.py`](../examples/fe90_air/charge_rdd.py),
+which is where every number below comes from.
+
+**The construction validates itself.** §3.2 predicted `W_δ ≈ 23 eV` from
+Cucinotta's 55–70 % δ-ray share. Rebuilding the profile — delete the excitation
+core, redistribute the sub-`r₀` energy rather than discard it — and measuring
+the share directly:
+
+| `r₀` | charge-RDD LET | share of total | `W_δ` |
+|---|---|---|---|
+| 1–20 µm | 0.401–0.404 keV/µm | **71.2–71.6 %** | **24.4 eV** |
+
+24.4 eV against a predicted 23 eV, and a 71 % δ-ray share against a predicted
+67 %. The paper's independently measured share and the tabulation's core term
+agree to a few percent.
+
+**The ladder settles.** R = 120 µm, one ion, `r₀` = 5 µm, two cores:
+
+| `h` [µm] | `k_s` (chamber), charge-RDD | `k_s` (chamber), dose-RDD |
+|---|---|---|
+| 10 | 1.173117 ᵃ | 1.322332 |
+| 5 | 1.137180 | 1.386873 |
+| 2.5 | 1.142586 | 1.438139 |
+| increment, 5 → 2.5 | **+0.0054** | +0.0432, and still climbing |
+
+ᵃ Not a valid rung: one voxel is wider than the core, so `r₀` is unresolved.
+
+Between the two rungs that do resolve the core, the answer moves **0.5 %**,
+against 4.3 % and rising for the dose-RDD at the same step. That is the
+structural difference a finite inner cutoff buys — refining past `r₀` stops
+changing anything, because the peak density stops growing.
+
+**`r₀` now carries the uncertainty, and that is the right place for it.** At
+h = 2.5 µm:
+
+| `r₀` [µm] | 1 | 2 | 5 | 10 | 20 |
+|---|---|---|---|---|---|
+| `k_s` (chamber) | 1.2116 | 1.1773 | 1.1426 | 1.1055 | 1.0634 |
+
+`k_s − 1` varies 3.3× across 1–20 µm. The model is only as good as `r₀` — but
+`r₀` is a measurable property of air, not a discretisation artefact, which is
+exactly the trade §4.3 was after. Note that *every* row is far below the
+dose-RDD's 1.481 at h = 1.25 µm and its extrapolated ≥ 1.71: removing the
+excitation core moves the answer substantially, in the direction §3.1 predicted.
+
+**Still open:** the 1.25 µm rung of the charge-RDD ladder, which would confirm
+the plateau rather than infer it from two points.
+
 ## 5. Why the multi-track case is the *easy* one
 
 Counter-intuitively, the IFJ campaign is less exposed to all of this than the
@@ -264,13 +314,13 @@ Two practical consequences:
 
 ## 6. Recommended order
 
-1. **Find the electron thermalisation distance in air at 1 atm** from the
-   literature (§4.3). Everything else is conditional on it, and it needs no
-   code.
-2. **Measure the charge-RDD against the dose-RDD** on the existing Fe-90 ladder:
-   same solver, same grids, only the profile changes. The test is whether the
-   `h`-ladder *converges*, which the dose-RDD demonstrably does not.
-3. If it converges, **derive the Gaussian `b` from `r₀`** (§4.2) and check that
+1. ~~Measure the charge-RDD against the dose-RDD on the Fe-90 ladder~~ — done,
+   §4.4. It converges; the dose-RDD does not.
+2. **Find the electron thermalisation distance in air at 1 atm** from the
+   literature (§4.3). This is now the *only* thing between the model and a
+   number: §4.4 shows `r₀` moves `k_s − 1` by 3.3× across 1–20 µm, and needs no
+   code to settle.
+3. **Derive the Gaussian `b` from `r₀`** (§4.2) and check that
    the cheap model reproduces the two-component one for a single ion. If it
    does, the multi-track campaign needs no new deposition code at all.
 4. Only then consider implementing the full two-component profile in the hot
@@ -282,11 +332,14 @@ Two practical consequences:
   agreement with the 33.3 % core in the **air** tabulation is a consistency
   check, not a derivation. libamtrack's actual core term has not been read.
 - The thermalisation-distance argument of §4.3 is reasoning from gas-detector
-  practice, not a cited measurement.
+  practice, not a cited measurement. §4.4 shows the answer depends on it
+  strongly, so this is the load-bearing gap.
 - The `n₊ ≠ n₋` asymmetry of §3.3 is argued, not quantified. The "roughly a
   third of pairs are primary" figure is a rule of thumb for air, not a
   calculation for this projectile.
-- `W_δ ≈ 23 eV` follows from the 67 % share; it has not been checked against any
-  independent determination of the δ-ray-only W-value.
+- `W_δ`: predicted 23 eV, measured 24.4 eV from the rebuilt profile (§4.4).
+  Both rest on the same 55-70 % share, so the agreement is a consistency check
+  on the construction, not an independent determination of a δ-ray-only
+  W-value.
 - Everything is for 90 MeV/u Fe in air. The δ-ray share varies little with ion
   velocity above 1 MeV/u per the paper, but the core/penumbra *balance* does.
