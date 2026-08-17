@@ -693,7 +693,33 @@ def run_simulation_cuda(
         raise ValueError(f'advise must be "device", "host" or "none", got {advise!r}.')
     if memory == "auto":
         free_device, _ = cp.cuda.runtime.memGetInfo()
-        memory = "device" if carrier_bytes(config) <= 0.9 * free_device else "managed"
+        if carrier_bytes(config) <= 0.9 * free_device:
+            memory = "device"
+        elif _host_page_tables(cp):
+            # Oversubscribed, on an ATS machine: stream from host memory, do NOT
+            # migrate. This is a measured choice, and the measurement was brutal
+            # -- the full electrode at 2 um (7.1 G voxels, 212 GiB against 95 GiB
+            # of HBM) ran at 32.1 *seconds* per step on managed memory with the
+            # prefetch-to-device policy, 84x slower than the same GPU's HBM rate
+            # on a grid that fits. Migration can only pay when there is a
+            # resident working set to reuse, and this sweep touches every one of
+            # those 212 GiB every single step, so prefetching into HBM just
+            # evicts what the next block of threads was about to need.
+            # docs/BENCHMARKS-HELIOS-GH200.md sec. 7.
+            memory = "host"
+        else:
+            memory = "managed"
+    elif memory == "managed":
+        free_device, _ = cp.cuda.runtime.memGetInfo()
+        if carrier_bytes(config) > 1.05 * free_device and _host_page_tables(cp):
+            warnings.warn(
+                f"This grid ({format_bytes(carrier_bytes(config))}) is larger than device memory "
+                f"({format_bytes(free_device)} free), and managed memory migrates pages the sweep "
+                "re-reads every step: the 212 GiB full electrode measured 32 s/step this way. "
+                'Prefer memory="host" on this machine -- it streams over NVLink-C2C without the '
+                "migration machinery. See docs/BENCHMARKS-HELIOS-GH200.md sec. 7.",
+                stacklevel=2,
+            )
     if memory == "host" and not _host_page_tables(cp):
         raise RuntimeError(
             'memory="host" needs a GPU that walks the host page tables (an ATS machine such as a '

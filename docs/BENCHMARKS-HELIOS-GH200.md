@@ -230,31 +230,56 @@ unchanged — but it is now a measurement rather than an inherited constant, and
 does not launch at all: the sweep's register footprint plus 3 × 1024 × 8 B of
 shared reduction arrays exceeds what an SM will give a single block.
 
-## 7. Past the GPU: what is not measured yet
+## 7. Past the GPU: migration does not work here
 
-The oversubscribed case — a grid larger than 95 GiB, spilling into LPDDR5X —
-needs a job with the host memory to hold the overflow, and the numbers above
-were taken in a 12 GiB allocation where it cannot be reached. The code path is
-exercised and correct (§5 runs every allocator, and `--ladder oversubscribe`
-sizes itself to whatever the job has), but **the per-step cost of a genuinely
-oversubscribed grid is not yet measured, and §5's ratios should not be
-extrapolated to it** — a fitting grid and an overflowing one are different
-regimes, which is the whole reason the ladder exists.
-
-What the arithmetic says to expect, on a whole node (478 GiB host + 95 GiB HBM
-≈ 570 GiB addressable):
+The reach of unified memory, on a whole node (478 GiB host + 95 GiB HBM ≈ 570
+GiB addressable):
 
 | target | grid | carrier arrays | fits in |
 |---|---|---|---|
 | full electrode @ 5 µm | 1066² × 410 | 13.9 GiB | HBM (156 s on an A100, GPU.md §5) |
 | **full electrode @ 2 µm** | **2656² × 1010** | **212 GiB** | unified memory only |
 | full electrode @ 1.5 µm | 3539² × 1343 | 501 GiB | the edge of a whole node |
-| full electrode @ 1 µm | 5306² × 2010 | 1.6 TiB | nothing on this machine |
+| full electrode @ 1 µm | 5306² × 2010 | 1.65 TiB | nothing on this machine |
 
-So 1 µm is reachable *per unit volume* but not yet across the whole electrode:
-the full-electrode column at 1 µm is 1.65 TiB, about 3x the whole node. The
-2 µm full electrode is the run this hardware makes newly possible, and
-`./submit_gh200.sh` submits it.
+So 1 µm is reachable per unit volume (§4) but not across the whole electrode:
+that column is 1.65 TiB, about 3× the node. The 2 µm full electrode is the run
+this hardware makes newly possible — 7.12 G voxels, 212 GiB, 2.2× the GPU's own
+memory. It runs. It also, on managed memory, runs appallingly:
+
+| | 2 µm full electrode, managed memory, `advise="device"` |
+|---|---|
+| grid | 2656² × 1010, 7.12 G voxels, 212.34 GiB |
+| ms/step | **32 143** — thirty-two *seconds* a step |
+| throughput | 0.22 Gvoxel/s, 7 GB/s effective |
+| 500 of 13 019 steps | **4 h 28 min** (job 20774789; a full run would be ~116 h) |
+| `f` at step 500 | 0.980600 — the physics is fine, only the speed is not |
+
+**84× slower than the same GPU's HBM rate**, and 13× worse than even §5's
+host-memory ratio would predict. This is the regime §5 explicitly refused to
+extrapolate into, and the refusal was right: a fitting grid and an overflowing
+one are not the same problem.
+
+The mechanism is not subtle in hindsight. Page migration pays when there is a
+resident working set that gets reused. **This sweep has none** — it streams all
+four carrier arrays end to end every single step, so 212 GiB moves through 95
+GiB of HBM per step no matter what, and `advise="device"` spends the whole step
+prefetching pages into HBM while evicting the pages the next warps were about
+to want. 7 GB/s is roughly 1/64 of the C2C link: almost all of the traffic is
+migration overhead rather than the data the kernel asked for.
+
+**So `memory="auto"` no longer chooses managed memory.** Past HBM, on an ATS
+machine, it chooses `memory="host"`: the arrays stay in LPDDR5X and the GPU
+reads them over C2C with no migration machinery in the loop, which is a cost
+that is flat by construction and measured at 6.3× in §5. Asking for
+`memory="managed"` on an oversubscribed grid now warns and points here.
+
+**Not yet measured:** that host-memory path *on this 212 GiB grid*. §5's 6.3×
+was measured on a grid that fits, and the whole lesson of this section is that
+the two regimes differ — so treat ~2.4 s/step as the hypothesis to test, not a
+result. `./submit_gh200.sh --only headline --steps 20 --memory host` is the
+experiment, and 20 steps is deliberate: at the managed rate that is 11 minutes,
+and there is no point spending another 4½ hours to learn the same thing twice.
 
 ## 8. Reproducing this page
 

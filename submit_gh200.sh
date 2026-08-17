@@ -118,8 +118,12 @@ module load Python/3.11.5
 module load CUDA/12.9.1
 cd "$REPO"
 source "$VENV/bin/activate"
-nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
-echo "host memory limit: \$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo unknown)"
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader --id=0
+# Not /sys/fs/cgroup/memory.max: Slurm puts the ceiling on the job scope, several
+# levels up from the task leaf, so the flat path printed "unknown" in job
+# 20774789. resources.py walks the hierarchy and is the same code the guards use.
+python -c "from pulsed_ion_chamber.resources import available_memory_bytes, total_memory_bytes, format_bytes; \
+print('host memory: %s available of %s' % (format_bytes(available_memory_bytes() or 0), format_bytes(total_memory_bytes() or 0)))"
 $*
 SCRIPT
 }
