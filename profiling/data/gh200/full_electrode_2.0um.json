@@ -1,0 +1,28 @@
+{
+  "host": "x1002c5s1b1n0",
+  "ladder": "0.265@2.0",
+  "max_steps": 500,
+  "dose_rate_water_Gy_s": 10.0,
+  "slurm_job_id": "20774789",
+  "rows": [
+    {
+      "sampled_radius_cm": 0.265,
+      "grid_size_um": 2.0,
+      "memory": "auto",
+      "advise": "device",
+      "threads_per_block": 256,
+      "no_xy": 2656,
+      "no_z_with_buffer": 1010,
+      "voxels": 7124879360,
+      "carrier_bytes": 227996139520,
+      "total_time_steps": 13019,
+      "wall_s": 16071.422470478108,
+      "steps": 500,
+      "ms_per_step": 32142.844940956216,
+      "gvox_per_s": 0.2208910176134764,
+      "gb_per_s": 7.068512563631245,
+      "f_end": 0.9806001094645362,
+      "ks": NaN
+    }
+  ]
+}

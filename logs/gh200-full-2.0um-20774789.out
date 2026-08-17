@@ -1,0 +1,10 @@
+NVIDIA GH200 120GB, 97871 MiB
+NVIDIA GH200 120GB, 97871 MiB
+NVIDIA GH200 120GB, 97871 MiB
+NVIDIA GH200 120GB, 97871 MiB
+host memory limit: unknown
+host=x1002c5s1b1n0  ladder=0.265@2.0  max_steps=500
+                grid   Mvoxel     arrays   memory  advise   tpb  steps   ms/step   Gvox/s    GB/s      f_end        k_s
+      2656x2656x1010     7125 212.34 GiB     auto  device   256    500  32142.84     0.22       7   0.980600         --
+
+wrote profiling/data/gh200/full_electrode_2.0um.json

@@ -45,3 +45,4 @@ htmlcov/
 profiling/data/helios_scaling/logs/
 # GPU benchmark: JSON results are committed, the run logs beside them are not.
 profiling/data/gpu_athena/*.log
+.venv-gh200/

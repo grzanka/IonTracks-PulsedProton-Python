@@ -1,0 +1,8 @@
+{
+  "host": "x1002c0s3b0n0",
+  "ladder": "oversubscribe",
+  "max_steps": 60,
+  "dose_rate_water_Gy_s": 10.0,
+  "slurm_job_id": "20773143",
+  "rows": []
+}

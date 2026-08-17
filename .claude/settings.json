@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(squeue)",
+      "Bash(squeue *)",
+      "Bash(scontrol show *)",
+      "Bash(sacct *)",
+      "Bash(sinfo)",
+      "Bash(sinfo *)",
+      "Bash(sstat *)",
+      "Bash(sprio *)",
+      "Bash(sshare *)",
+      "Bash(nvidia-smi)",
+      "Bash(nvidia-smi *)",
+      "Bash(lscpu)",
+      "Bash(numactl -H)",
+      "Bash(module list)",
+      "Bash(module avail *)",
+      "Bash(module spider *)"
+    ]
+  }
+}

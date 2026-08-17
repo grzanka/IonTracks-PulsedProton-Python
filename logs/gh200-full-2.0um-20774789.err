@@ -1,0 +1,12 @@
+ binutils/2.40 loaded.
+ bzip2/1.0.8 loaded.
+ zlib/1.2.13 loaded.
+ ncurses/6.4 loaded.
+ libreadline/8.2 loaded.
+ Tcl/8.6.13 loaded.
+ SQLite/3.43.1 loaded.
+ XZ/5.4.4 loaded.
+ libffi/3.4.4 loaded.
+ OpenSSL/1.1 loaded.
+ Python/3.11.5 loaded.
+ CUDA/12.9.1 loaded.

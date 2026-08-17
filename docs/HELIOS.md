@@ -15,6 +15,12 @@ this study's mid-range by up to 195 %.
 
 ---
 
+**On the GH200 partition** (`plgrid-gpu-gh200`, Grace Hopper nodes) none of
+this applies -- that is a different machine with a different answer, and it has
+its own page: [BENCHMARKS-HELIOS-GH200.md](BENCHMARKS-HELIOS-GH200.md).
+
+---
+
 ## 1. The machine
 
 | | |
