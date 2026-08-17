@@ -171,10 +171,12 @@ def main(args) -> list:
     if len(rows) > 1:
         print()
         print(
-            "k_s is expected to keep rising as h falls: the RDD core is denser than "
-            "any affordable voxel resolves, and recombination goes as <n^2>. "
-            "It stops rising once h is below the ~1 um diffusion length reached in "
-            "the first 0.1 us -- see examples/fe90_air/README.md sec. 4.3."
+            "k_s rises as h falls: the RDD core is denser than any affordable voxel "
+            "resolves, and recombination goes as <n^2>. It does NOT settle -- the "
+            "increments shrink but their ratio grows, and the model has no "
+            "short-distance cutoff to converge to. Read the finest rung as an error "
+            "bar on the coarser ones, not as the answer; "
+            "see examples/fe90_air/README.md sec. 7."
         )
     return rows
 

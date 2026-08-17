@@ -317,6 +317,7 @@ throughout, one iron ion on the axis:
 | 10 | 28×28×206 | 9.417e10 | 72.05 % | 444 | 331 | 1.511338 | 1.322332 | 24.38 % | 4.9 MiB | 0.2 s |
 | 5 | 56×56×406 | 3.561e11 | 72.05 % | 209 | 705 | 1.631729 | 1.386873 | 27.90 % | 39 MiB | 1.6 s |
 | 2.5 | 112×112×806 | 1.343e12 | 72.05 % | 92 | 1596 | 1.732612 | 1.438139 | 30.47 % | 309 MiB | 28.2 s |
+| 1.25 | 224×224×1606 | 5.045e12 | 72.05 % | 37 | 4025 | 1.821418 | 1.481347 | 32.49 % | 2.40 GiB | 760.5 s |
 
 Three things to read off it.
 
@@ -332,11 +333,8 @@ is the area-averaging property of §4.1 working: the three grids cover the same
 instead would make this drift with `h`, and every `k_s` above would move for a
 reason that has nothing to do with physics.
 
-**`k_s` is not converged, and rises as predicted.** Halving `h` roughly
-quadruples the core density and adds ~5 % to `k_s − 1` each time. The
-increments are shrinking (+0.0645, +0.0513 on the chamber figure, a ratio of
-0.80), so this is converging rather than diverging — but not to anything the
-three rungs pin down. The 1.25 µm rung is what says where.
+**`k_s` is not converged, and refining further will not fix it.** See §7 — this
+is the result that decides how to read all the others.
 
 **Against the Gaussian.** Same ion, same grid, same field, only the radial
 profile differs: the Rossomme Gaussian gives `k_s` = 1.0435 at 5 µm, the
@@ -344,15 +342,120 @@ Cucinotta RDD 1.6317. The loss is **14× larger**. That is the whole reason the
 RDD was worth implementing, and it means no result from the Gaussian track
 model should be quoted for iron.
 
-## 7. What is left
+## 7. Is a finer grid a better grid?
+
+Short answer: **1.25 µm is a better *diagnostic* than 5 µm, but not a better
+*answer*.** Four reasons, in order of how much they should change what you do.
+
+### 7.1 The ladder is not converging to anything reachable
+
+| `h` [µm] | `k_s` (chamber) | increment | ratio to previous |
+|---|---|---|---|
+| 10 | 1.322332 | | |
+| 5 | 1.386873 | +0.064541 | |
+| 2.5 | 1.438139 | +0.051266 | 0.794 |
+| 1.25 | 1.481347 | +0.043208 | **0.843** |
+
+The increments shrink, but the *ratio* between them **rises** (0.794 → 0.843;
+on the in-domain figure, 0.838 → 0.880). Geometric convergence has a constant
+ratio; a rising one is the signature of logarithmic behaviour, where the limit
+is approached arbitrarily slowly or not at all.
+
+Extrapolating geometrically from the last pair puts the limit at
+`k_s(chamber)` ≈ **1.71** — another **16 %** above the 1.25 µm value, and that
+is a *lower* bound if the ratio keeps rising. Brute force cannot close it:
+each halving is 16× the work, so 0.625 µm is 19 GiB and ~3.4 h on two cores,
+and 0.3125 µm is 154 GiB and ~54 h.
+
+There is a reason to expect no `h → 0` limit at all. The model has **no
+intrinsic short-distance cutoff**: the RDD keeps rising into the core, the
+continuum recombination term `α n₊n₋` has no minimum length scale, and a
+line charge collapsing to a point gives a logarithmically divergent
+`∫∫ α n² dV dt`. What holds it back here is depletion — the core recombines
+away faster than it concentrates — but nothing in the formulation bounds it.
+
+**The fix is physical, not numerical: regularise the core.** The Gaussian `b`
+of the original IonTracks model is exactly such a regularisation, just a crude
+one. A defensible middle ground is to smear the RDD by a physically motivated
+scale (delta-ray thermalisation / geminate-pair separation) before depositing,
+and *then* refine until converged — which it now will.
+
+### 7.2 At 1.25 µm the continuum model is describing ~10 ion pairs
+
+The whole track creates **33,000 ion pairs** in the 2 mm gap. Per peak voxel:
+
+| `h` [µm] | ion pairs in the peak voxel |
+|---|---|
+| 10 | 94 |
+| 5 | 45 |
+| 2.5 | 21 |
+| **1.25** | **9.9** |
+| 0.625 | 4.6 |
+
+`α n₊n₋` is a mean-field rate: it assumes the two carrier populations are
+uncorrelated. At creation they are the opposite — every positive ion sits
+beside the electron it lost. That correlation is what "initial recombination"
+means, and the columnar model deliberately averages over it. Resolving below
+the scale where a voxel holds many pairs does not make the model more accurate;
+it resolves structure the model does not claim to describe.
+
+### 7.3 The answer is dominated by a timescale that *is* the grid
+
+Measured, per rung: when does the recombination actually happen?
+
+| `h` [µm] | 50 % of all recombination by | 90 % by | time to diffuse out of one voxel |
+|---|---|---|---|
+| 10 | 2.22 µs | 15.2 µs | 5.75 µs |
+| 5 | 0.78 µs | 11.3 µs | 1.44 µs |
+| 2.5 | 0.34 µs | 8.8 µs | 0.36 µs |
+
+Out of a 147 µs run, half the loss is over within a microsecond — and that
+time tracks `h²/4D`, the time for the core to diffuse out of its own voxel,
+almost exactly. The dominant term is therefore "how long does charge sit in
+the voxel it was created in", which is a discretisation property. Refining
+changes it by construction.
+
+### 7.4 The degrees of freedom are in the wrong place
+
+At *every* spacing, **one voxel** carries 90 % of the initial `∫n² dV`. Only
+0.1 % of a uniform grid's transverse area lies within 5 µm of the axis, where
+57 % of the track's energy is — and that ratio is the same at 5 µm and at
+1.25 µm, because uniform refinement scales both.
+
+This is the one place the FEniCS mesh is straightforwardly the better design.
+Graded 5 → 50 µm, it reaches the same on-axis resolution with **28,515**
+vertices where the uniform 5 µm grid needs **1.27 M**, and the 1.25 µm grid
+80.6 M. We win on wall time anyway (§3.1: ~3200× cheaper per DOF-step), but
+that is compensating for the wrong structure with raw speed.
+
+And the errors are unbalanced. At 1.25 µm the core-resolution error is the
+smallest it has been, while the **lateral truncation error is still 28 %** —
+the column holds 72 % of the track at every rung. Spending 16× the compute to
+refine the core while a 28 % truncation sits untouched is the wrong trade.
+
+### 7.5 What to do instead
+
+- **For the cross-code comparison, match at 5 µm.** That is the apples-to-apples
+  check against the FEniCS on-axis spacing, and it is where a disagreement
+  would mean something.
+- **Use 1.25 µm as the error bar, not the answer.** It says the 5 µm result is
+  ~7 % low in `k_s`, and the extrapolation says the continuum limit is ~23 %
+  above 5 µm — quote that as a systematic, the way `docs/PHYSICS.md` §14 treats
+  the finite-column bias.
+- **Then spend effort in this order:** core regularisation (§7.1, the only one
+  that makes the ladder converge), radial grading (§7.4), the out-of-domain
+  28 % (§4.2), anisotropic `hz` (§3).
+
+## 8. What is left
 
 1. ~~RDD table loader + area-averaged stencil~~ — `pulsed_ion_chamber/rdd.py`.
 2. ~~Axis placement and explicit track count~~ — `track_placement`, `n_tracks`.
 3. ~~Out-of-domain correction~~ — `rdd.chamber_ks`, reported by `run_fe90.py`.
-4. The `h` ladder below 1.25 µm. Each further halving is 16× the work
-   (§3, `h⁻⁴`) and the laptop is out of room at 0.625 µm (19 GiB); this is the
-   natural point to move to Athena or Helios, or to `solver_cuda` on a GH200
-   where the unified-memory path (#22) exists for exactly this.
+4. **Core regularisation** (§7.1). Without a physical short-distance cutoff
+   the ladder has no limit to converge to, so this is the prerequisite for
+   every further refinement rather than an addition to them. Refining below
+   1.25 µm before doing it is buying resolution of a model artefact — and
+   0.625 µm is already 19 GiB and ~3.4 h on two cores.
 5. One R = 600 µm run at the best affordable `h`, to size the lateral
    truncation error separately from the core one.
 6. Analytic recombination update (§4.3) — cheap insurance, not a prerequisite.
