@@ -73,15 +73,32 @@ Wall times below are the existing Gaussian-track solver
 (`solver_numba_parallel`), which has the same PDE cost per voxel-step the RDD
 version will have:
 
-| `h` [µm] | R [µm] | grid | Mvoxels | RAM | `dt` [ns] | steps | 1 thread | 4 threads |
-|---|---|---|---|---|---|---|---|---|
-| 10 | 120 | 28×28×206 | 0.16 | 4.9 MiB | 444 | 331 | 0.3 s | 0.2 s |
-| **5** | **120** | **56×56×406** | **1.27** | **39 MiB** | **209** | **705** | **2.8 s ᵐ** | **1.4 s ᵐ** |
-| 2.5 | 120 | 112×112×806 | 10.1 | 309 MiB | 92 | 1596 | 85 s | 50 s |
-| 1.25 | 120 | 224×224×1606 | 80.6 | 2.40 GiB | 37 | 4025 | ~29 min | ~17 min |
-| **5** | **600** | **248×248×406** | **25.0** | **762 MiB** | **209** | **705** | **93 s ᵐ** | **54 s ᵐ** |
-| 5 | 1200 | 488×488×406 | 96.7 | 2.88 GiB | 209 | 705 | ~6 min | ~4 min |
-| 2.5 | 600 | 496×496×806 | 198 | 5.91 GiB | 92 | 1596 | ~28 min | ~16 min |
+The first two columns are the **simulated volume** (a square column, `W × W`
+transverse by `Lz` axial); the next three are the **voxel size along each
+axis**; the sixth is the **voxel count along each axis**.
+
+| `W` [µm] | `Lz` [µm] | `hx` [µm] | `hy` [µm] | `hz` [µm] | `nx × ny × nz` | Mvoxels | RAM | `dt` [ns] | steps | 1 thread | 4 threads |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 280 | 2060 | 10 | 10 | 10 | 28×28×206 | 0.16 | 4.9 MiB | 444 | 331 | 0.3 s | 0.2 s |
+| **280** | **2030** | **5** | **5** | **5** | **56×56×406** | **1.27** | **39 MiB** | **209** | **705** | **2.8 s ᵐ** | **1.4 s ᵐ** |
+| 280 | 2015 | 2.5 | 2.5 | 2.5 | 112×112×806 | 10.1 | 309 MiB | 92 | 1596 | 85 s | 50 s |
+| 280 | 2007.5 | 1.25 | 1.25 | 1.25 | 224×224×1606 | 80.6 | 2.40 GiB | 37 | 4025 | ~29 min | ~17 min |
+| **1240** | **2030** | **5** | **5** | **5** | **248×248×406** | **25.0** | **762 MiB** | **209** | **705** | **93 s ᵐ** | **54 s ᵐ** |
+| 2440 | 2030 | 5 | 5 | 5 | 488×488×406 | 96.7 | 2.88 GiB | 209 | 705 | ~6 min | ~4 min |
+| 1240 | 2015 | 2.5 | 2.5 | 2.5 | 496×496×806 | 198 | 5.91 GiB | 92 | 1596 | ~28 min | ~16 min |
+
+**The three voxel sizes are equal by construction, not by choice.** The
+Lax-Wendroff stencil carries a single `unit_length_cm`, and the von Neumann
+condition (§3.1) is written for `sx = sy = sz`; anisotropic spacing — e.g. a
+coarse `hz` to exploit the fact that the track is uniform along `z` — would
+need a new stencil and a new stability condition. It is the obvious first
+optimisation to reach for and it is not currently available.
+
+`Lz` exceeds the 2000 µm gap by `6 × hz`: three voxels of electrode margin at
+each end (`no_z_electrode=3`), so charge leaves the gap before it leaves the
+array. `W` likewise exceeds the scored disc by the lateral buffer — the three
+distinct widths correspond to **R = 120 µm** (the FEniCS-matched column),
+**600 µm** and **1200 µm**.
 
 ᵐ = measured; the rest projected from the measured 5.29 ns per voxel-step at
 1 thread. `dt` is the von Neumann limit for the two Kanai species; the step
