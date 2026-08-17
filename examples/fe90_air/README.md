@@ -103,6 +103,64 @@ reflected in the table — they change the economics of the fine-`h` ladder in
 §4.3 substantially, and that ladder is the natural first thing to re-time on a
 GPU node.
 
+### 3.1 Time step — we do not get to choose it
+
+The FEniCS run uses **dt = 700 ns**, 987 steps, 691.18 µs total; 4 min 41 s in
+the solve loop, 546 MB peak, one core.
+
+We cannot use 700 ns, and should not want to. `dt` here is slaved to `h` by the
+von Neumann condition on the explicit Lax-Wendroff scheme
+(`6s + c² ≤ 1`, `s = D dt/h²`, `c = µE dt/h`):
+
+| `h` [µm] | `dt_max` [ns] | Courant | `6s` | binding term |
+|---|---|---|---|---|
+| 1.25 | 36.6 | 0.614 | 0.611 | diffusion |
+| 2.5 | 92.2 | 0.775 | 0.385 | drift |
+| **5** | **208.5** | **0.876** | 0.218 | drift |
+| 10 | 444.2 | 0.933 | 0.116 | drift |
+| 15.4 | 700 | 0.954 | 0.078 | drift |
+| 20 | 918.4 | 0.964 | 0.060 | drift |
+
+Three things follow.
+
+**Use the von Neumann limit, i.e. leave `dt_seconds=None`.** Lax-Wendroff's
+leading dispersive error scales as `(1 − c²)` and vanishes at Courant 1, so
+shrinking `dt` below the limit makes the *drift* term worse while costing
+proportionally more steps. There is no accuracy to buy by backing off; the only
+real knob is `h`.
+
+**700 ns would force `h ≥ 15.4 µm`** — three times coarser than the FEniCS
+on-axis spacing, and hopeless for a core that is still unresolved at 5 µm
+(§4.3). Only worth doing as a deliberate coarse apples-to-apples cross-check.
+
+**Their 700 ns at 5 µm is Courant 2.94.** That is fine for stability — an
+implicit solve is unconditionally stable — but stability is not accuracy: the
+ion cloud crosses ~3 cells per step, and backward Euler smears it. For this
+problem that bias runs the same direction as the unresolved core, i.e. it
+*lowers* `k_s`. Worth asking them for a `dt` halving check (700 → 350 → 175 ns)
+at fixed mesh; if `k_s` moves, the step is doing physics.
+
+**Run length.** Full-gap transit of the slowest carrier (µ⁺ = 1.36 cm²/V·s at
+1000 V/cm) is **147 µs**, which is what our clearance criterion uses. Their
+691 µs is 4.7× that. Worth asking what sets it — if it is only a safety factor,
+their solve loop has a ~4.7× saving in it.
+
+**Cost per degree of freedom**, since the two codes are otherwise hard to
+compare:
+
+| | FEniCS, implicit, unstructured | this code, explicit, regular |
+|---|---|---|
+| DOFs | 28,515 vertices | 1.27 M voxels (56×56×406) |
+| steps | 987 | 705 |
+| solve wall time | 281 s | 2.8 s |
+| per DOF-step | ~10 µs | 3.1 ns |
+| peak memory | 546 MB | 39 MiB |
+
+The implicit solve buys a 3.4× larger `dt` for roughly 3200× the cost per
+DOF-step and ~600× the memory per DOF. That is the whole trade: matrix-free
+explicit stepping on a regular grid can afford 45× more unknowns and still
+finish 100× sooner, which is exactly the budget the `h` ladder in §4.3 needs.
+
 ## 4. What has to be built
 
 ### 4.1 RDD deposition kernel
@@ -175,13 +233,28 @@ h = 10 → 5 → 2.5 → 1.25 µm at R = 120 µm and report `k_s(h)`** — that 
 first result worth having, it costs under half an hour on 4 threads, and it
 tells the FEniCS side whether their 5 µm on-axis spacing is adequate.
 
-**The explicit recombination step is stiff.** `_lax_wendroff_step_numba`
-subtracts `α·dt·p·n` using old values; `α n₀ dt` is already 0.12 at 5 µm and
-0.29 at 1.25 µm, so the splitting error on the peak is several percent and grows
-exactly where the answer is being sought. Replace it with the analytic update
-for the symmetric case, `n → n/(1 + α n dt)`, which is exact when `p = n` (true
-for a fresh track, by construction) and unconditionally positive. Small, local
-change; do it before trusting the ladder.
+**The explicit recombination step is stiffer than usual, but not a problem.**
+`_lax_wendroff_step_numba` subtracts `α·dt·p·n` using old values, and `α n₀ dt`
+reaches 0.117 at 5 µm and 0.291 at 1.25 µm — far above anything the AIC-144
+scenarios produce. Measured against the analytic solution of `dn/dt = −αn²`, in
+a recombination-only decay of the centre voxel over 700 steps:
+
+| `h` [µm] | `dt` [ns] | `α n₀ dt` | explicit `n(end)` | analytic `n(end)` | error on integrated loss |
+|---|---|---|---|---|---|
+| 10 | 444 | 0.066 | 1.957e9 | 1.967e9 | 0.01 % |
+| 5 | 209 | 0.117 | 4.204e9 | 4.230e9 | 0.01 % |
+| 2.5 | 92 | 0.195 | 9.544e9 | 9.612e9 | 0.01 % |
+| 1.25 | 37 | 0.291 | 2.412e10 | 2.431e10 | 0.00 % |
+
+The per-step splitting error is a percent or two on the *peak density*, but it
+almost cancels in the *integrated* loss, which is what `k_s` is built from — the
+core recombines away either way, only the trajectory differs. `α n dt` would
+have to reach 1 (around `h ≈ 0.7 µm`) before the explicit form could go
+negative, which is below anything affordable.
+
+So the analytic update `n → n/(1 + α n dt)` — exact when `p = n`, which a fresh
+track satisfies by construction, and unconditionally positive — is worth having
+as cheap insurance, but it is **not** a prerequisite for the ladder.
 
 ### 4.4 Single ion on the axis
 
@@ -214,11 +287,11 @@ of magnitude, upward, and to keep moving as `h` shrinks.
 
 ## 6. Order of work
 
-1. Analytic recombination update (§4.3) — small, and everything downstream
-   depends on it.
-2. RDD table loader + area-averaged stencil (§4.1), validated by checking the
+1. RDD table loader + area-averaged stencil (§4.1), validated by checking the
    deposited charge against `2πρ∫D r dr` over the domain.
-3. Axis placement and explicit track count (§4.4).
-4. Out-of-domain correction (§4.2), reported alongside the raw in-domain number.
-5. The `h` ladder at R = 120 µm (§4.3), then one R = 600 µm run at the best
-   affordable `h` to size the lateral truncation error.
+2. Axis placement and explicit track count (§4.4).
+3. Out-of-domain correction (§4.2), reported alongside the raw in-domain number.
+4. The `h` ladder at R = 120 µm (§4.3), each rung at its own von Neumann `dt`
+   (§3.1), then one R = 600 µm run at the best affordable `h` to size the
+   lateral truncation error.
+5. Analytic recombination update (§4.3) — cheap insurance, not a prerequisite.
